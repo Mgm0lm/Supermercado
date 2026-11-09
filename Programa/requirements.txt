@@ -1,0 +1,21 @@
+PySide6>=6.6.0
+PySide6-Addons>=6.6.0
+opencv-python>=4.9.0
+numpy>=1.26.0
+ultralytics>=8.4.0
+onnxruntime>=1.17.0
+
+# OCR do rótulo (sistema de pontos). Modelos embutidos, usa o onnxruntime
+# acima (sem PyTorch). Sem ele o app funciona só com o YOLO (ou use
+# ENABLE_OCR = False). Em Python < 3.13 o pacote antigo
+# "rapidocr-onnxruntime" também é aceito.
+rapidocr>=3.0.0
+
+# Necessario apenas para o gesto de finalizar compra (config.py ->
+# ENABLE_GESTURE_CHECKOUT_DEFAULT / botão "Finalizar compra com
+# gesto"). Se não for usar essa função, pode remover estas 3 linhas.
+# A primeira execução baixa automaticamente o modelo HandLandmarker
+# (precisa de internet só nessa vez).
+mediapipe>=0.10.0
+scikit-learn>=1.4.0
+joblib>=1.3.0

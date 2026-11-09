@@ -1,0 +1,15 @@
+/.cargo-cache-local/
+/.release-work/
+/Executaveis/
+/datasets/
+/target/
+/Programa/build/
+/Programa/dist/
+/Programa/.venv/
+/Programa/venv/
+/Programa/modelo/gesture_dataset.csv
+__pycache__/
+*.py[cod]
+*.log
+config_override.json
+.env

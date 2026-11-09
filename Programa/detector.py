@@ -1,0 +1,124 @@
+"""
+Thread de deteccao. Roda separada da thread de camera, na velocidade
+que o hardware permitir - é isso que possibilita manter o video fluido
+mesmo em maquina fraca (ver config.DESYNC_BBOXES).
+"""
+
+import logging
+import time
+import traceback
+from threading import Lock
+
+from PySide6.QtCore import QThread, Signal
+
+logger = logging.getLogger(__name__)
+
+MAX_CONSECUTIVE_ERRORS = 5
+
+
+class Detection:
+    __slots__ = ("cls_name", "conf", "box")
+
+    def __init__(self, cls_name, conf, box):
+        self.cls_name = cls_name
+        self.conf = conf
+        self.box = box  # (x1, y1, x2, y2)
+
+
+class DetectionWorker(QThread):
+    # lista[Detection], frame usado (BGR np.ndarray), frame_id
+    detections_ready = Signal(list, object, int)
+    model_error = Signal(str)
+    model_ready = Signal()
+
+    def __init__(self, model_path, shared_frame, conf_threshold, imgsz=640, parent=None):
+        super().__init__(parent)
+        self.shared_frame = shared_frame
+        self.model_path = model_path
+        self.imgsz = imgsz
+
+        self._conf_lock = Lock()
+        self._conf_threshold = conf_threshold
+        self._running = False
+        self._model = None
+
+    def set_conf_threshold(self, value):
+        with self._conf_lock:
+            self._conf_threshold = value
+
+    def _get_conf_threshold(self):
+        with self._conf_lock:
+            return self._conf_threshold
+
+    def run(self):
+        logger.info("Thread de detecção iniciada. Carregando modelo: %s", self.model_path)
+        try:
+            import os as _os
+            _os.environ.setdefault("YOLO_AUTOINSTALL", "False")
+
+            from ultralytics import YOLO
+            try:
+                from ultralytics import settings as _yolo_settings
+                _yolo_settings.update({"sync": False})
+            except Exception:
+                pass  # nao critico - so evita telemetria/rede em background
+
+            self._model = YOLO(self.model_path)
+        except Exception:
+            logger.exception("Falha ao carregar o modelo (%s)", self.model_path)
+            self.model_error.emit(
+                f"Erro ao carregar o modelo ({self.model_path}).\n"
+                "Detalhes completos foram salvos em app.log."
+            )
+            return
+
+        logger.info("Modelo carregado com sucesso. Classes: %s", getattr(self._model, "names", "?"))
+        self.model_ready.emit()
+        self._running = True
+        last_frame_id = -1
+        consecutive_errors = 0
+
+        while self._running:
+            frame, frame_id = self.shared_frame.get()
+            if frame is None or frame_id == last_frame_id:
+                time.sleep(0.01)
+                continue
+            last_frame_id = frame_id
+
+            conf = self._get_conf_threshold()
+            try:
+                results = self._model.predict(
+                    frame, conf=conf, imgsz=self.imgsz, verbose=False
+                )
+                consecutive_errors = 0
+            except Exception:
+                consecutive_errors += 1
+                logger.exception(
+                    "Erro durante a inferência (tentativa %d/%d)",
+                    consecutive_errors, MAX_CONSECUTIVE_ERRORS
+                )
+                if consecutive_errors >= MAX_CONSECUTIVE_ERRORS:
+                    self.model_error.emit(
+                        "A detecção parou após vários erros seguidos de inferência.\n"
+                        "Detalhes completos foram salvos em app.log."
+                    )
+                    self._running = False
+                    break
+                time.sleep(0.5)
+                continue
+
+            detections = []
+            if results:
+                r = results[0]
+                names = r.names
+                for b in r.boxes:
+                    cls_id = int(b.cls[0])
+                    cls_name = names.get(cls_id, str(cls_id)) if isinstance(names, dict) else names[cls_id]
+                    conf_val = float(b.conf[0])
+                    x1, y1, x2, y2 = [int(v) for v in b.xyxy[0]]
+                    detections.append(Detection(cls_name, conf_val, (x1, y1, x2, y2)))
+
+            self.detections_ready.emit(detections, frame, frame_id)
+
+    def stop(self):
+        self._running = False

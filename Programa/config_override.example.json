@@ -1,0 +1,6 @@
+{
+  "_comentario": "Copie este arquivo para 'config_override.json' (mesma pasta do .exe) e edite. Remova essa chave '_comentario' se quiser, ela é só ignorada.",
+  "CONF_THRESHOLD_DEFAULT": 0.6,
+  "SOUND_VOLUME": 1.0,
+  "ENABLE_GESTURE_CHECKOUT_DEFAULT": false
+}

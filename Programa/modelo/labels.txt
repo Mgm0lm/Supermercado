@@ -1,0 +1,10 @@
+0 Miojo 
+1 Feijão
+2 Café
+3 Ketchup
+4 Coca-Cola
+5 Mostarda
+6 Molho de tomate
+7 Milho
+8 Azeitonas
+9 Nada

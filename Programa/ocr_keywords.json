@@ -1,0 +1,56 @@
+{
+  "_comentario": "Edite as palavras de cada classe (nome da classe igual ao do YOLO). Sem acento nem maiuscula, uma palavra por item. Reinicie o programa para aplicar.",
+  "Azeitonas": [
+    "azeitonas",
+    "saborosas",
+    "fatiadas"
+  ],
+  "Café": [
+    "cafe",
+    "coracoes",
+    "torrado",
+    "moido"
+  ],
+  "Coca 600ml": [
+    "coca",
+    "cola"
+  ],
+  "Feijão": [
+    "feijao",
+    "pacha",
+    "vermelho"
+  ],
+  "Feijão Vermelho": [
+    "feijao",
+    "pacha",
+    "vermelho"
+  ],
+  "Ketchup": [
+    "ketchup",
+    "hellmann"
+  ],
+  "Milho": [
+    "milho"
+  ],
+  "Molho de tomate": [
+    "molho",
+    "tomate",
+    "predilecta"
+  ],
+  "Mostarda": [
+    "mostarda",
+    "flamboyant"
+  ],
+  "Nissin Miojo": [
+    "miojo",
+    "nissin",
+    "galinha",
+    "caipirinha"
+  ],
+  "3 Corações": [
+    "cafe",
+    "coracoes",
+    "torrado",
+    "moido"
+  ]
+}
