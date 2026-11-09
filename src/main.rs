@@ -12,8 +12,10 @@ use config::{Config, Result};
 use detector::Detector;
 use gesture::{HandTracker, Mlp};
 use std::{
+    cell::Cell,
     env, fs,
     path::{Path, PathBuf},
+    rc::Rc,
     time::Instant,
 };
 use windows::{
@@ -29,6 +31,7 @@ fn run() -> Result<()> {
         .ok_or("Executável sem pasta")?
         .to_path_buf();
     let mut debug = false;
+    let mut check_fullscreen = false;
     let mut operation = None;
     while let Some(arg) = args.next() {
         match arg.to_str() {
@@ -38,6 +41,7 @@ fn run() -> Result<()> {
                 ))?
             }
             Some("--debug") => debug = true,
+            Some("--check-fullscreen") => check_fullscreen = true,
             Some("--check-models") => operation = Some(Check::Models),
             Some("--check-camera") => operation = Some(Check::Camera),
             Some("--check-image" | "--check-ocr" | "--check-mlp") => {
@@ -54,16 +58,23 @@ fn run() -> Result<()> {
             _ => return Err(format!("Argumento desconhecido: {arg:?}").into()),
         }
     }
-    let cfg = Config::load(&base)?;
+    let mut cfg = Config::load(&base)?;
     if let Some(check) = operation {
         return check.run(&base, &cfg);
     }
     let title = cfg.app_title.clone();
+    if check_fullscreen {
+        cfg.max_cameras_to_scan = 0;
+        cfg.enable_ocr = false;
+        cfg.enable_gesture_checkout_default = false;
+    }
+    let result = Rc::new(Cell::new(false));
+    let probe = check_fullscreen.then(|| result.clone());
     let options = eframe::NativeOptions {
         viewport: eframe::egui::ViewportBuilder::default()
             .with_fullscreen(true)
-            .with_inner_size([1250.0, 780.0])
-            .with_min_inner_size([970.0, 620.0]),
+            .with_decorations(false),
+        persist_window: false,
         ..Default::default()
     };
     eframe::run_native(
@@ -71,11 +82,14 @@ fn run() -> Result<()> {
         options,
         Box::new(move |context| {
             Ok(Box::new(
-                ui::App::new(&context.egui_ctx, &base, cfg, debug)
+                ui::App::new(&context.egui_ctx, &base, cfg, debug, probe)
                     .map_err(|err| err.to_string())?,
             ))
         }),
     )?;
+    if check_fullscreen && !result.get() {
+        return Err("A área do caixa não preencheu o monitor.".into());
+    }
     Ok(())
 }
 
@@ -101,7 +115,10 @@ impl Check {
                 if !detections.is_empty() || !hands.is_empty() || !probability.is_finite() {
                     return Err("Resultado inválido no quadro sintético vazio".into());
                 }
-                println!("YOLO26, MediaPipe e MLP carregados e executados.");
+                println!(
+                    "YOLO26 via {}, MediaPipe e MLP carregados e executados.",
+                    detector.backend_name()
+                );
             }
             Self::Camera => {
                 let cameras = nokhwa::query(nokhwa::utils::ApiBackend::MediaFoundation)?;
@@ -128,6 +145,7 @@ impl Check {
                 let mlp = Mlp::load(&cfg.gesture_model_path)?;
                 let probability = gesture::features(&hands).map(|f| mlp.predict(&f));
                 let output = serde_json::json!({
+                    "backend": detector.backend_name(),
                     "detections": detections.iter().map(|d| serde_json::json!({
                         "class": d.class, "confidence": d.confidence, "bounds": d.bounds,
                     })).collect::<Vec<_>>(),

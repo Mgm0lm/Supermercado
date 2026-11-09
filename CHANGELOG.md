@@ -1,5 +1,11 @@
 # Histórico de versões
 
+## rust-v0.2.0
+
+- Abertura sem moldura, com a área do caixa ocupando o monitor e `Esc` para sair.
+- Interface ajustada pela referência Python, com Segoe UI, título proporcional à tela, cartões, carrinho com cabeçalho e grade e os indicadores originais de leitura.
+- OpenVINO em CPU para o modelo ONNX e para exportações YOLO26 em OpenVINO IR. O runtime acompanha o ZIP de Windows x64.
+
 ## rust-v0.1.0
 
 - Port do aplicativo de caixa para Rust em Windows x64, com vídeo à esquerda, controles e carrinho à direita, abertura em tela cheia e os mesmos atalhos e ações de compra.

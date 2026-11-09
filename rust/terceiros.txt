@@ -9,6 +9,9 @@ https://github.com/google-ai-edge/mediapipe
 ONNX Runtime, Microsoft. Veja ONNXRuntime-LICENSE.txt e ONNXRuntime-ThirdPartyNotices.txt.
 https://github.com/microsoft/onnxruntime
 
+OpenVINO Runtime e oneTBB, Intel e contribuidores. Veja OpenVINO-LICENSE.txt.
+https://github.com/openvinotoolkit/openvino
+
 PP-OCRv4, Baidu e contribuidores PaddleOCR. Modelos de detecção e reconhecimento
 convertidos para ONNX por RapidOCR e obtidos de rapidocr-onnxruntime 1.4.4.
 Licença Apache 2.0. Veja RapidOCR-LICENSE.txt.

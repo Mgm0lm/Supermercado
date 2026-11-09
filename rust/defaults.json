@@ -47,6 +47,7 @@
     }
   },
   "MODEL_PATH": "modelo/best.onnx",
+  "MODEL_BACKEND": "auto",
   "GESTURE_MODEL_PATH": "modelo/gesture_mlp.json",
   "HAND_LANDMARKER_MODEL_PATH": "modelo/hand_landmarker.task",
   "CAMERA_PANEL_RATIO": 0.62,

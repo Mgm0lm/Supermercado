@@ -2,6 +2,8 @@ param(
     [Parameter(Mandatory)] [string] $MediaPipeDll,
     [Parameter(Mandatory)] [string] $MediaPipeNotices,
     [Parameter(Mandatory)] [string] $OnnxRuntimeDir,
+    [Parameter(Mandatory)] [string] $OpenVinoDir,
+    [Parameter(Mandatory)] [string] $OpenVinoLicense,
     [Parameter(Mandatory)] [string] $VcRuntimeDir,
     [Parameter(Mandatory)] [string] $OcrWheel,
     [Parameter(Mandatory)] [string] $OcrLicense,
@@ -20,6 +22,14 @@ New-Item -Force -ItemType Directory -Path $ocrModels,$notices | Out-Null
 Copy-Item -LiteralPath $exe -Destination (Join-Path $stage 'CaixaVisaoComputacional.exe')
 Copy-Item -LiteralPath $MediaPipeDll -Destination (Join-Path $stage 'libmediapipe.dll')
 Copy-Item -LiteralPath (Join-Path $OnnxRuntimeDir 'capi/onnxruntime.dll') -Destination $stage
+$openvinoFiles = @(
+    'openvino_c.dll', 'openvino.dll', 'openvino_intel_cpu_plugin.dll',
+    'openvino_ir_frontend.dll', 'openvino_onnx_frontend.dll',
+    'tbb12.dll', 'tbbbind_2_5.dll', 'tbbmalloc.dll'
+)
+foreach ($file in $openvinoFiles) {
+    Copy-Item -LiteralPath (Join-Path $OpenVinoDir "libs/$file") -Destination $stage
+}
 foreach ($runtime in 'msvcp140.dll','msvcp140_1.dll','vcruntime140.dll','vcruntime140_1.dll') {
     Copy-Item -LiteralPath (Join-Path $VcRuntimeDir $runtime) -Destination $stage
 }
@@ -27,13 +37,13 @@ foreach ($file in 'best.onnx','hand_landmarker.task') {
     Copy-Item -LiteralPath (Join-Path $root "Programa/modelo/$file") -Destination $models
 }
 Copy-Item -LiteralPath (Join-Path $root 'rust/gesture_mlp.json') -Destination $models
-foreach ($file in 'ocr_keywords.json','config_override.example.json') {
-    Copy-Item -LiteralPath (Join-Path $root "Programa/$file") -Destination $stage
-}
+Copy-Item -LiteralPath (Join-Path $root 'Programa/ocr_keywords.json') -Destination $stage
+Copy-Item -LiteralPath (Join-Path $root 'rust/config_override.example.json') -Destination $stage
 Copy-Item -LiteralPath (Join-Path $MediaPipeNotices 'LICENSE') -Destination (Join-Path $notices 'MediaPipe-LICENSE.txt')
 Copy-Item -LiteralPath (Join-Path $MediaPipeNotices 'NOTICE') -Destination (Join-Path $notices 'MediaPipe-NOTICE.txt')
 Copy-Item -LiteralPath (Join-Path $OnnxRuntimeDir 'LICENSE') -Destination (Join-Path $notices 'ONNXRuntime-LICENSE.txt')
 Copy-Item -LiteralPath (Join-Path $OnnxRuntimeDir 'ThirdPartyNotices.txt') -Destination (Join-Path $notices 'ONNXRuntime-ThirdPartyNotices.txt')
+Copy-Item -LiteralPath $OpenVinoLicense -Destination (Join-Path $notices 'OpenVINO-LICENSE.txt')
 Copy-Item -LiteralPath $OcrLicense -Destination (Join-Path $notices 'RapidOCR-LICENSE.txt')
 Copy-Item -LiteralPath (Join-Path $root 'rust/terceiros.txt') -Destination $notices
 
@@ -63,8 +73,8 @@ $files = @(
     'ocr_keywords.json', 'config_override.example.json',
     'avisos/MediaPipe-LICENSE.txt', 'avisos/MediaPipe-NOTICE.txt',
     'avisos/ONNXRuntime-LICENSE.txt', 'avisos/ONNXRuntime-ThirdPartyNotices.txt',
-    'avisos/RapidOCR-LICENSE.txt', 'avisos/terceiros.txt'
-)
+    'avisos/RapidOCR-LICENSE.txt', 'avisos/OpenVINO-LICENSE.txt', 'avisos/terceiros.txt'
+) + $openvinoFiles
 & tar -a -cf $asset -C $stage @files
 if ($LASTEXITCODE -ne 0) { throw "Falha ao criar $asset" }
 $sha = (Get-FileHash -LiteralPath $asset -Algorithm SHA256).Hash.ToLowerInvariant()

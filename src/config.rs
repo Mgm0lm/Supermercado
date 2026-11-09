@@ -13,12 +13,21 @@ pub struct Product {
     pub price: f64,
 }
 
+#[derive(Clone, Copy, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum ModelBackend {
+    Auto,
+    Onnxruntime,
+    Openvino,
+}
+
 #[derive(Clone, Deserialize)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub struct Config {
     pub app_title: String,
     pub products: BTreeMap<String, Product>,
     pub model_path: PathBuf,
+    pub model_backend: ModelBackend,
     pub gesture_model_path: PathBuf,
     pub hand_landmarker_model_path: PathBuf,
     pub camera_panel_ratio: f32,

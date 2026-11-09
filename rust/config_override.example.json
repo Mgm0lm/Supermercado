@@ -1,0 +1,9 @@
+{
+    "MODEL_BACKEND": "auto",
+    "MODEL_PATH": "modelo/best.onnx",
+    "CONF_THRESHOLD_DEFAULT": 0.60,
+    "MIN_DETECTION_SECONDS": 1.5,
+    "ENABLE_GESTURE_CHECKOUT_DEFAULT": false,
+    "DESYNC_BBOXES": true,
+    "ENABLE_SOUND": true
+}
