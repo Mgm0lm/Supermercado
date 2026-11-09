@@ -167,8 +167,10 @@ Pra não depender só do YOLO, cada classe recebe pontos de duas fontes:
 | Desempate | até 5 | se classes acima da confiança mínima estão a até 8 pontos percentuais da melhor, a mais perto do centro da imagem ganha `5 x (1 - distância/distância_máxima)` |
 | OCR | até 60 | lê o rótulo e procura palavras de `OCR_KEYWORDS` (2 palavras = 60, 1 = 30; tolera erros de leitura e acentos) |
 
-A classe com maior total é a candidata (e precisa ficar 1.5s, como
-antes), desde que `total >= 40 x precisão mínima` — os botões `+`/`-`
+A classe com maior total é a candidata, desde que
+`total >= 40 x precisão mínima`. Quando uma leitura atual do OCR
+confirma o produto detectado pelo YOLO, ele entra no carrinho assim que
+o OCR responde. Nos demais casos, a candidata precisa ficar 1.5s. Os botões `+`/`-`
 continuam valendo e, com o OCR desligado, o comportamento é idêntico
 ao de antes. O OCR pode arbitrar entre classes parecidas (ex: o YOLO
 oscila entre milho e molho de tomate, mas o rótulo diz "predilecta").
@@ -204,9 +206,10 @@ python main.py
   informa de forma confiável se é câmera USB ou integrada — os nomes
   são genéricos "Câmera 0", "Câmera 1"... teste antes do dia da
   apresentação para saber qual índice é qual).
-- Um produto só é lançado no carrinho depois de **1.5s contínuos** de
-  detecção, e depois disso há um **cooldown de 2.5s** antes de aceitar
-  uma nova leitura (ambos ajustáveis em `config.py`).
+- O lançamento é imediato após a concordância entre YOLO e OCR. Quando
+  a confirmação por OCR falta ou é ambígua, o caixa exige **1.5s
+  contínuos** de detecção. Nos dois casos há um **cooldown de 2.5s**
+  depois do lançamento (os tempos são ajustáveis em `config.py`).
 
 ## 5. Sobre desempenho em hardware fraco
 

@@ -98,6 +98,27 @@ def match_keywords(texts, keywords_by_class=None):
     return result
 
 
+def same_product(first, second):
+    a, b = config.PRODUCTS.get(first), config.PRODUCTS.get(second)
+    return first == second or (
+        a is not None and b is not None
+        and (a["display_name"], a["price"]) == (b["display_name"], b["price"])
+    )
+
+
+def ocr_confirms(class_name, matches):
+    """A leitura atual deve favorecer o mesmo produto, sem empate com outro."""
+    own, other = 0.0, 0.0
+    for name, match in matches.items():
+        if name not in config.PRODUCTS:
+            continue
+        if same_product(name, class_name):
+            own = max(own, match.points)
+        else:
+            other = max(other, match.points)
+    return own > other + 1e-6
+
+
 # ---------------------------------------------------------------- pontos
 @dataclass
 class ClassScore:

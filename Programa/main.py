@@ -182,6 +182,8 @@ class MainWindow(QMainWindow):
         self.ocr_elapsed = 0.0
         self.ocr_updated_at = None
         self.ocr_ignore_before = 0.0
+        self.ocr_target = None
+        self.ocr_target_since = 0.0
         self.ocr_history = deque()  # (instante, textos) das leituras dentro do TTL
         self.ocr_region = ""
 
@@ -500,6 +502,7 @@ class MainWindow(QMainWindow):
     # CAMERA / DETECTOR
     # ------------------------------------------------------------------
     def _start_camera(self, index):
+        self._invalidate_ocr(time.time())
         self.shared_frame.clear()
         self.camera_worker = CameraWorker(
             index, config.CAMERA_FPS_TARGET,
@@ -547,6 +550,21 @@ class MainWindow(QMainWindow):
         # palavras achadas em leituras diferentes se somam durante o TTL
         # (cada leitura costuma pegar só parte do rótulo, por desfoque/ângulo)
         ttl = cfg("OCR_RESULT_TTL_SECONDS", 3.0)
+        target = self.ocr_target
+        if (
+            self.ocr_available
+            and target is not None
+            and now >= self.cooldown_until
+            and requested_at >= self.ocr_target_since
+            and now - requested_at <= ttl
+            and not any(scoring.same_product(target, name) for name in self.blocked)
+            and scoring.ocr_confirms(target, scoring.match_keywords(texts))
+        ):
+            self._confirm_product(target, now)
+            self.status_label.setText("Aguardando... (evitando leitura duplicada)")
+            self.progress_bar.setValue(100)
+            self._update_message()
+            return
         self.ocr_history.append((now, texts))
         while self.ocr_history and now - self.ocr_history[0][0] > ttl:
             self.ocr_history.popleft()
@@ -564,6 +582,7 @@ class MainWindow(QMainWindow):
     def _invalidate_ocr(self, now):
         """Descarta leituras antigas (produto saiu, foi adicionado, etc)."""
         self.ocr_ignore_before = now
+        self.ocr_target = None
         self.ocr_matches = {}
         self.ocr_texts = []
         self.ocr_updated_at = None
@@ -637,14 +656,17 @@ class MainWindow(QMainWindow):
         new_val = round(self.conf_threshold + delta, 2)
         new_val = max(config.CONF_THRESHOLD_MIN, min(config.CONF_THRESHOLD_MAX, new_val))
         self.conf_threshold = new_val
+        self._invalidate_ocr(time.time())
         self.threshold_label.setText(f"{self.conf_threshold * 100:.0f}%")
         if self.detection_worker is not None:
             self.detection_worker.set_conf_threshold(self.conf_threshold)
 
     def _on_camera_error(self, msg):
+        self._invalidate_ocr(time.time())
         QMessageBox.critical(self, "Erro de câmera", msg)
 
     def _on_model_error(self, msg):
+        self._invalidate_ocr(time.time())
         self.status_label.setText("Erro no modelo. Veja os detalhes")
         QMessageBox.critical(self, "Erro no modelo", msg)
 
@@ -716,13 +738,19 @@ class MainWindow(QMainWindow):
             return
 
         valid = [d for d in detections if d.cls_name in config.PRODUCTS]
-        unblocked = [d for d in valid if d.cls_name not in self.blocked]
+        unblocked = [
+            d for d in valid if d.cls_name not in self.blocked and d.conf >= self.conf_threshold
+        ]
+        top = max(unblocked, key=lambda d: d.conf, default=None)
+        target = top.cls_name if top is not None else None
+        if target != self.ocr_target:
+            self.ocr_target = target
+            self.ocr_target_since = now
 
         # alimenta o OCR (ignora o que já foi adicionado e continua na cena)
         use_crop = cfg("OCR_USE_BOX_CROP", True)
         if cfg("ENABLE_OCR", True) and self.ocr_available:
-            if unblocked:
-                top = max(unblocked, key=lambda d: d.conf)
+            if top is not None:
                 self.ocr_input.set(frame, top.box if use_crop else None)
             elif not valid:
                 if use_crop:
@@ -761,11 +789,14 @@ class MainWindow(QMainWindow):
         self.progress_bar.setValue(int(progress * 100))
 
         if elapsed >= config.MIN_DETECTION_SECONDS:
-            self._add_to_cart(best_name)
-            self.blocked[best_name] = now
-            self.cooldown_until = now + config.COOLDOWN_SECONDS
-            self._reset_candidate()
-            self._invalidate_ocr(now)
+            self._confirm_product(best_name, now)
+
+    def _confirm_product(self, class_name, now):
+        self._add_to_cart(class_name)
+        self.blocked[class_name] = now
+        self.cooldown_until = now + config.COOLDOWN_SECONDS
+        self._reset_candidate()
+        self._invalidate_ocr(now)
 
     def _reset_candidate(self):
         self.candidate_class = None

@@ -10,13 +10,13 @@ Protótipo de ponto de venda que usa a câmera para reconhecer embalagens e mont
 
 O pacote inclui o ambiente do aplicativo. O computador precisa de Windows de 64 bits e acesso a uma câmera. Na execução por código-fonte, instale as dependências abaixo.
 
-O ZIP Python de 3 de novembro está sem o arquivo de configuração do RapidOCR. A leitura de rótulos por OCR fica indisponível nesse pacote.
+O ZIP Python atual inclui os modelos de OCR. Na release de 3 de novembro, faltava um arquivo de configuração do RapidOCR.
 
 ## Como a leitura funciona
 
 - A captura e a inferência rodam em tarefas separadas. O modo **Vídeo fluido** exibe o quadro mais recente com a última detecção. Desmarque para exibir cada quadro junto de sua própria inferência.
 - O YOLO26 analisa o quadro usando `Programa/modelo/best.onnx`. O aplicativo considera classes do catálogo em `Programa/config.py`. A pontuação soma até 40 pontos pela confiança do YOLO e até 5 pelo desempate pela posição no quadro. Quando o OCR está disponível e ativado, palavras do rótulo somam até 60 pontos, segundo `ocr_keywords.json`.
-- A confiança mínima começa em 60% e pode ser ajustada com `−` e `+`. Uma classe precisa permanecer como candidata por 1,5 s. Depois de adicionar o produto, o caixa espera 2,5 s. A mesma classe só volta a ser elegível depois de sair da cena pelo intervalo configurado.
+- A confiança mínima começa em 60% e pode ser ajustada com `−` e `+`. Quando o YOLO e uma leitura atual do OCR confirmam o mesmo produto, ele entra no carrinho assim que o OCR responde. Em caso de divergência, empate ou OCR indisponível, a classe precisa permanecer como candidata por 1,5 s. Depois de adicionar o produto, o caixa espera 2,5 s. A mesma classe só volta a ser elegível depois de sair da cena pelo intervalo configurado.
 - O gesto é opcional e começa desativado. O MediaPipe Hand Landmarker extrai 21 pontos em três dimensões de cada mão. O programa normaliza os pontos pelo pulso e pelo tamanho da palma, ordena esquerda e direita e envia 126 valores ao classificador MLP treinado. Com as duas mãos e confiança de pelo menos 80% por 1,5 s, o gesto aciona o mesmo fechamento de **Nova compra**.
 - `--debug` abre o painel de pontuação e OCR. Preços e parâmetros ficam em `config.py`. Para sobrescrever parâmetros em uma instalação, copie `Programa/config_override.example.json` para `config_override.json` ao lado do executável e reinicie.
 

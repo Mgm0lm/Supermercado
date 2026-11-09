@@ -12,6 +12,11 @@ tmp_ret = collect_all('scipy')
 datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
 tmp_ret = collect_all('joblib')
 datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
+for package in ('rapidocr', 'rapidocr_onnxruntime'):
+    ocr_datas, ocr_binaries, ocr_imports = collect_all(package)
+    datas += ocr_datas
+    binaries += ocr_binaries
+    hiddenimports += ocr_imports
 
 
 a = Analysis(
