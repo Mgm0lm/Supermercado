@@ -177,6 +177,27 @@ pub fn scores(
     scores
 }
 
+fn same_product(cfg: &Config, first: &str, second: &str) -> bool {
+    first == second
+        || cfg
+            .products
+            .get(first)
+            .zip(cfg.products.get(second))
+            .is_some_and(|(a, b)| a.display_name == b.display_name && a.price == b.price)
+}
+
+fn ocr_confirms(cfg: &Config, scores: &BTreeMap<String, Score>, target: &str) -> bool {
+    let (mut own, mut other) = (0.0_f32, 0.0_f32);
+    for (name, score) in scores {
+        if same_product(cfg, name, target) {
+            own = own.max(score.ocr);
+        } else {
+            other = other.max(score.ocr);
+        }
+    }
+    own > other + 1e-6
+}
+
 #[derive(Default)]
 pub struct Checkout {
     pub cart: Vec<(String, u32)>,
@@ -188,6 +209,30 @@ pub struct Checkout {
 }
 
 impl Checkout {
+    pub fn confirm_ocr(
+        &mut self,
+        now: f64,
+        cfg: &Config,
+        threshold: f32,
+        scores: &BTreeMap<String, Score>,
+        target: &str,
+    ) -> bool {
+        if now < self.cooldown_until
+            || !scores
+                .get(target)
+                .is_some_and(|score| score.conf >= threshold)
+            || !ocr_confirms(cfg, scores, target)
+            || self
+                .blocked
+                .keys()
+                .any(|name| same_product(cfg, name, target))
+        {
+            return false;
+        }
+        self.add_product(now, cfg, target);
+        true
+    }
+
     pub fn product(
         &mut self,
         now: f64,
@@ -226,15 +271,19 @@ impl Checkout {
         if now - *start < cfg.min_detection_seconds {
             return false;
         }
+        self.add_product(now, cfg, name);
+        true
+    }
+
+    fn add_product(&mut self, now: f64, cfg: &Config, name: &str) {
         if let Some((_, qty)) = self.cart.iter_mut().find(|(class, _)| class == name) {
             *qty += 1;
         } else {
-            self.cart.push((name.clone(), 1));
+            self.cart.push((name.to_owned(), 1));
         }
-        self.blocked.insert(name.clone(), now);
+        self.blocked.insert(name.to_owned(), now);
         self.cooldown_until = now + cfg.cooldown_seconds;
         self.candidate = None;
-        true
     }
 
     pub fn gesture(&mut self, now: f64, cfg: &Config, confidence: f64) -> bool {
@@ -313,6 +362,57 @@ mod tests {
         assert!(!checkout.gesture(1.5, &cfg, 0.95));
         assert!(checkout.gesture(3.0, &cfg, 0.95));
         assert!(!checkout.gesture(4.5, &cfg, 0.95));
+    }
+
+    #[test]
+    fn fresh_agreement_skips_hold_and_keeps_duplicate_protection() {
+        let cfg = Config::load(Path::new(".")).unwrap();
+        let keywords = parse_keywords(include_bytes!("../Programa/ocr_keywords.json")).unwrap();
+        let detection = Detection {
+            class: "Café".into(),
+            confidence: 0.9,
+            bounds: [0.0, 0.0, 40.0, 40.0],
+        };
+        let scores = scores(
+            &cfg,
+            &[detection],
+            (100, 100),
+            0.6,
+            "café 3 corações",
+            &keywords,
+        );
+        let mut checkout = Checkout::default();
+        assert!(!checkout.product(0.0, &cfg, 0.6, &scores));
+        assert!(checkout.confirm_ocr(0.1, &cfg, 0.6, &scores, "Café"));
+        assert!(!checkout.confirm_ocr(0.2, &cfg, 0.6, &scores, "Café"));
+        assert!(!checkout.confirm_ocr(3.0, &cfg, 0.6, &scores, "Café"));
+        assert_eq!(checkout.cart, vec![("Café".into(), 1)]);
+    }
+
+    #[test]
+    fn divergent_or_ambiguous_ocr_keeps_hold() {
+        let cfg = Config::load(Path::new(".")).unwrap();
+        let keywords = parse_keywords(include_bytes!("../Programa/ocr_keywords.json")).unwrap();
+        let detection = Detection {
+            class: "Milho".into(),
+            confidence: 0.9,
+            bounds: [0.0, 0.0, 40.0, 40.0],
+        };
+        for text in ["mostarda flamboyant", "milho mostarda flamboyant"] {
+            let scores = scores(
+                &cfg,
+                std::slice::from_ref(&detection),
+                (100, 100),
+                0.6,
+                text,
+                &keywords,
+            );
+            let mut checkout = Checkout::default();
+            assert!(!checkout.confirm_ocr(0.0, &cfg, 0.6, &scores, "Milho"));
+            assert!(!checkout.product(0.0, &cfg, 0.6, &scores));
+            assert!(!checkout.confirm_ocr(1.4, &cfg, 0.6, &scores, "Milho"));
+            assert!(checkout.product(1.5, &cfg, 0.6, &scores));
+        }
     }
 
     #[test]

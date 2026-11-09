@@ -1,7 +1,7 @@
 use crate::{
     checkout::{self, Checkout, Keywords, Score},
     config::{Config, Result},
-    workers::{self, Found, Frame, Gesture, OcrRequest, Workers},
+    workers::{self, Found, Frame, Gesture, OcrRequest, OcrText, Workers},
 };
 use eframe::egui::{
     self, Align, Align2, Color32, CornerRadius, FontFamily, FontId, Frame as Card, Layout, Rect,
@@ -43,6 +43,8 @@ pub struct App {
     detection_id: u64,
     gesture_id: u64,
     ocr_token: u64,
+    ocr_target: Option<(String, u64)>,
+    last_ocr_frame: u64,
     texture: Option<(u64, egui::TextureHandle)>,
     previous_frame: Option<(u64, Instant)>,
     previous_detection: Option<Instant>,
@@ -101,6 +103,8 @@ impl App {
             detection_id: 0,
             gesture_id: 0,
             ocr_token: 1,
+            ocr_target: None,
+            last_ocr_frame: 0,
             texture: None,
             previous_frame: None,
             previous_detection: None,
@@ -165,6 +169,7 @@ impl App {
 
     fn reset_ocr(&mut self) {
         self.ocr_token += 1;
+        self.ocr_target = None;
         let mut workers = self.workers.lock().unwrap();
         workers.ocr_request = None;
         workers.ocr = None;
@@ -192,13 +197,16 @@ impl App {
         ));
     }
 
-    fn update_product(&mut self, found: &Arc<Found>, text: &str, now: f64) {
-        self.detection_id = found.frame.id;
-        self.detection_fps = fps(
-            self.previous_detection.replace(found.finished),
-            found.finished,
-            self.detection_fps,
-        );
+    fn update_product(&mut self, found: &Arc<Found>, ocr: Option<&OcrText>, now: f64) {
+        let new_detection = self.detection_id != found.frame.id;
+        if new_detection {
+            self.detection_id = found.frame.id;
+            self.detection_fps = fps(
+                self.previous_detection.replace(found.finished),
+                found.finished,
+                self.detection_fps,
+            );
+        }
         let valid = found
             .detections
             .iter()
@@ -206,25 +214,43 @@ impl App {
         let has_product = valid.clone().next().is_some();
         let best = valid
             .filter(|d| !self.checkout.blocked.contains_key(&d.class))
-            .max_by(|a, b| a.confidence.total_cmp(&b.confidence))
-            .map(|d| d.bounds);
-        let text = if self.cfg.enable_ocr && self.cfg.ocr_use_box_crop && !has_product {
+            .max_by(|a, b| a.confidence.total_cmp(&b.confidence));
+        if new_detection
+            && self.ocr_target.as_ref().map(|(class, _)| class.as_str())
+                != best.map(|d| d.class.as_str())
+        {
+            self.ocr_target = best.map(|d| (d.class.clone(), found.frame.id));
+        }
+        let ocr = if self.cfg.enable_ocr && self.cfg.ocr_use_box_crop && !has_product {
             self.reset_ocr();
-            ""
+            None
         } else {
-            text
+            ocr
         };
+        let ocr_target = self.ocr_target.as_ref().and_then(|(class, first_frame)| {
+            ocr.filter(|result| {
+                result.frame_id >= *first_frame
+                    && result.captured.elapsed().as_secs_f64() <= self.cfg.ocr_result_ttl_seconds
+            })
+            .map(|_| class.as_str())
+        });
         self.scores = checkout::scores(
             &self.cfg,
             &found.detections,
             found.frame.pixels.dimensions(),
             self.threshold,
-            text,
+            ocr.map_or("", |result| result.text.as_str()),
             &self.keywords,
         );
-        if self
-            .checkout
-            .product(now, &self.cfg, self.threshold, &self.scores)
+        let confirmed = ocr_target.is_some_and(|class| {
+            self.checkout
+                .confirm_ocr(now, &self.cfg, self.threshold, &self.scores, class)
+        });
+        if confirmed
+            || (new_detection
+                && self
+                    .checkout
+                    .product(now, &self.cfg, self.threshold, &self.scores))
         {
             self.beep();
             self.reset_ocr();
@@ -242,10 +268,10 @@ impl App {
         } else {
             "Aguardando produto...".into()
         };
-        if self.cfg.enable_ocr && !cooldown {
+        if new_detection && self.cfg.enable_ocr && !cooldown {
             if best.is_some() || (!self.cfg.ocr_use_box_crop && !has_product) {
                 let bounds = if self.cfg.ocr_use_box_crop {
-                    best
+                    best.map(|d| d.bounds)
                 } else {
                     None
                 };
@@ -794,6 +820,9 @@ impl eframe::App for App {
             .as_ref()
             .filter(|g| g.frame.captured.elapsed() < Duration::from_secs(1));
         if epoch != self.camera_epoch || new_found.is_none() {
+            if epoch != self.camera_epoch || self.ocr_target.is_some() {
+                self.reset_ocr();
+            }
             self.camera_epoch = epoch;
             self.checkout.candidate = None;
             self.scores.clear();
@@ -816,9 +845,12 @@ impl eframe::App for App {
             o.token == self.ocr_token
                 && o.finished.elapsed().as_secs_f64() <= self.cfg.ocr_result_ttl_seconds
         });
-        if let Some(found) = new_found.filter(|f| f.frame.id != self.detection_id) {
-            let text = fresh_ocr.map_or("", |o| o.text.as_str());
-            self.update_product(found, text, now);
+        let new_ocr = fresh_ocr.is_some_and(|ocr| ocr.frame_id != self.last_ocr_frame);
+        if let Some(ocr) = fresh_ocr {
+            self.last_ocr_frame = ocr.frame_id;
+        }
+        if let Some(found) = new_found.filter(|f| f.frame.id != self.detection_id || new_ocr) {
+            self.update_product(found, fresh_ocr.map(AsRef::as_ref), now);
         }
         if let Some(gesture) = gesture.filter(|g| g.frame.id != self.gesture_id) {
             self.update_gesture(gesture, now);

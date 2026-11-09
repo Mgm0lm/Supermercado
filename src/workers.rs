@@ -48,6 +48,8 @@ pub struct OcrRequest {
 pub struct OcrText {
     pub text: String,
     pub token: u64,
+    pub frame_id: u64,
+    pub captured: Instant,
     pub finished: Instant,
     pub duration: Duration,
 }
@@ -416,6 +418,8 @@ fn recognize_text(shared: Workers, cfg: Config, base: PathBuf) {
                 state.ocr = Some(Arc::new(OcrText {
                     text,
                     token: request.token,
+                    frame_id: request.frame.id,
+                    captured: request.frame.captured,
                     finished: Instant::now(),
                     duration: started.elapsed(),
                 }));
