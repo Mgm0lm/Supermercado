@@ -244,6 +244,9 @@ máquina da apresentação:
 
 ## 6. Gerar o .exe (PyInstaller)
 
+Se usar a série Python 3.12, empacote com Python 3.12.1 ou posterior
+para o SciPy carregar corretamente no executável.
+
 ```bash
 pip install pyinstaller
 
