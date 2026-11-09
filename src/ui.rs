@@ -74,13 +74,18 @@ pub struct App {
 
 impl App {
     pub fn new(context: &egui::Context, base: &Path, cfg: Config, debug: bool) -> Result<Self> {
-        let keywords = match fs::read(base.join("ocr_keywords.json")) {
-            Ok(bytes) => serde_json::from_slice(&bytes)?,
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-                serde_json::from_str(include_str!("../Programa/ocr_keywords.json"))?
-            }
-            Err(error) => return Err(error.into()),
-        };
+        let mut keywords =
+            checkout::parse_keywords(include_bytes!("../Programa/ocr_keywords.json"))?;
+        match fs::read(base.join("ocr_keywords.json")) {
+            Ok(bytes) => match checkout::parse_keywords(&bytes) {
+                Ok(overrides) => keywords.extend(overrides),
+                Err(error) => {
+                    eprintln!("Falha ao ler ocr_keywords.json. Usando os padrões: {error}")
+                }
+            },
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => eprintln!("Falha ao abrir ocr_keywords.json. Usando os padrões: {error}"),
+        }
         let mut style = egui::Style::default();
         style.visuals = egui::Visuals::light();
         style.visuals.override_text_color = Some(INK);

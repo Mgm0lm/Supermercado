@@ -17,6 +17,25 @@ impl Score {
 
 pub type Keywords = BTreeMap<String, Vec<String>>;
 
+pub fn parse_keywords(bytes: &[u8]) -> serde_json::Result<Keywords> {
+    let entries: BTreeMap<String, serde_json::Value> = serde_json::from_slice(bytes)?;
+    Ok(entries
+        .into_iter()
+        .filter_map(|(class, words)| {
+            if class.starts_with('_') {
+                return None;
+            }
+            let words = words
+                .as_array()?
+                .iter()
+                .filter_map(serde_json::Value::as_str)
+                .map(str::to_owned)
+                .collect();
+            Some((class, words))
+        })
+        .collect())
+}
+
 fn normalize(text: &str) -> String {
     text.to_lowercase()
         .chars()
@@ -255,6 +274,13 @@ impl Checkout {
 mod tests {
     use super::*;
     use std::path::Path;
+
+    #[test]
+    fn packaged_keywords_allow_comments() {
+        let keywords = parse_keywords(include_bytes!("../Programa/ocr_keywords.json")).unwrap();
+        assert!(!keywords.contains_key("_comentario"));
+        assert!(keywords["Café"].iter().any(|word| word == "cafe"));
+    }
 
     #[test]
     fn requires_hold_and_absence_between_two_scans() {
