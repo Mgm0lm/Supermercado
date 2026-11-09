@@ -1,5 +1,12 @@
 # Histórico de versões
 
+## rust-v0.1.0
+
+- Port do aplicativo de caixa para Rust em Windows x64, com vídeo à esquerda, controles e carrinho à direita, abertura em tela cheia e os mesmos atalhos e ações de compra.
+- Inferência YOLO26 pelo ONNX Runtime, captura pelo Media Foundation, OCR local com modelos PP-OCRv4 e rastreamento de mãos via MediaPipe Tasks.
+- Exportação da MLP treinada e inferência em Rust com os mesmos 126 valores de entrada. O gesto e o botão **Nova compra** compartilham o fechamento do carrinho.
+- ZIP portátil, verificação SHA-256, instruções de compilação e modos de diagnóstico para câmera e modelos.
+
 ## python-2026.11.03
 
 Primeira publicação no GitHub. O identificador usa a data do ZIP do PyInstaller existente no projeto.

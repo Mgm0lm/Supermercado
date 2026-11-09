@@ -1,0 +1,18 @@
+Modelos e bibliotecas de terceiros
+
+YOLO26n, Ultralytics. O metadado do ONNX do projeto identifica AGPL-3.0.
+https://github.com/ultralytics/ultralytics/blob/main/LICENSE
+
+MediaPipe Tasks, The MediaPipe Authors. Veja MediaPipe-LICENSE.txt e MediaPipe-NOTICE.txt.
+https://github.com/google-ai-edge/mediapipe
+
+ONNX Runtime, Microsoft. Veja ONNXRuntime-LICENSE.txt e ONNXRuntime-ThirdPartyNotices.txt.
+https://github.com/microsoft/onnxruntime
+
+PP-OCRv4, Baidu e contribuidores PaddleOCR. Modelos de detecção e reconhecimento
+convertidos para ONNX por RapidOCR e obtidos de rapidocr-onnxruntime 1.4.4.
+Licença Apache 2.0. Veja RapidOCR-LICENSE.txt.
+https://github.com/RapidAI/RapidOCR/blob/main/MODEL_LICENSES.md
+
+Microsoft Visual C++ Runtime (arquivos app-local).
+https://learn.microsoft.com/cpp/windows/redistributing-visual-cpp-files

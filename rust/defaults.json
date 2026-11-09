@@ -1,0 +1,89 @@
+{
+  "APP_TITLE": "Caixa Autônomo (Visão Computacional)",
+  "PRODUCTS": {
+    "Azeitonas": {
+      "display_name": "Azeitonas verdes fatiadas Saborosas 220g",
+      "price": 8.5
+    },
+    "Café": {
+      "display_name": "Café Tradicional 3 Corações 500g",
+      "price": 25.5
+    },
+    "Coca 600ml": {
+      "display_name": "Coca-Cola 600ml",
+      "price": 8.0
+    },
+    "Feijão": {
+      "display_name": "Feijão Vermelho Pachá 1kg",
+      "price": 10.9
+    },
+    "Feijão Vermelho": {
+      "display_name": "Feijão Vermelho Pachá 1kg",
+      "price": 10.9
+    },
+    "Ketchup": {
+      "display_name": "Ketchup Hellmann's 380g",
+      "price": 8.9
+    },
+    "Milho": {
+      "display_name": "Milho",
+      "price": 6.5
+    },
+    "Molho de tomate": {
+      "display_name": "Molho de tomate Predilecta 300g",
+      "price": 6.5
+    },
+    "Mostarda": {
+      "display_name": "Mostarda Flamboyant 180g",
+      "price": 7.5
+    },
+    "Nissin Miojo": {
+      "display_name": "Nissin Miojo Galinha Caipirinha",
+      "price": 2.5
+    },
+    "3 Corações": {
+      "display_name": "Café Tradicional 3 Corações 500g",
+      "price": 25.5
+    }
+  },
+  "MODEL_PATH": "modelo/best.onnx",
+  "GESTURE_MODEL_PATH": "modelo/gesture_mlp.json",
+  "HAND_LANDMARKER_MODEL_PATH": "modelo/hand_landmarker.task",
+  "CAMERA_PANEL_RATIO": 0.62,
+  "CAMERA_FRAME_WIDTH": 1280,
+  "CAMERA_FRAME_HEIGHT": 720,
+  "CAMERA_FPS_TARGET": 30,
+  "MAX_CAMERAS_TO_SCAN": 5,
+  "DESYNC_BBOXES": true,
+  "CONF_THRESHOLD_DEFAULT": 0.6,
+  "CONF_THRESHOLD_MIN": 0.1,
+  "CONF_THRESHOLD_MAX": 0.95,
+  "CONF_THRESHOLD_STEP": 0.05,
+  "MIN_DETECTION_SECONDS": 1.5,
+  "COOLDOWN_SECONDS": 2.5,
+  "RELEASE_ABSENCE_SECONDS": 0.15,
+  "ENABLE_GESTURE_CHECKOUT_DEFAULT": false,
+  "GESTURE_HOLD_SECONDS": 1.5,
+  "GESTURE_COOLDOWN_SECONDS": 3.0,
+  "GESTURE_MIN_CONFIDENCE": 0.8,
+  "MEDIAPIPE_MIN_DETECTION_CONFIDENCE": 0.6,
+  "MEDIAPIPE_MIN_TRACKING_CONFIDENCE": 0.5,
+  "SCORE_YOLO_MAX_POINTS": 40,
+  "SCORE_CENTER_MAX_POINTS": 5,
+  "SCORE_CENTER_TIE_MARGIN": 0.08,
+  "SCORE_OCR_MAX_POINTS": 60,
+  "ENABLE_OCR": true,
+  "OCR_INTERVAL_SECONDS": 0.5,
+  "OCR_RESULT_TTL_SECONDS": 3.0,
+  "OCR_USE_BOX_CROP": true,
+  "OCR_BOX_PADDING": 0.1,
+  "OCR_MAX_SIDE": 800, "OCR_DET_SIDE_LEN": 448, "OCR_MIN_TEXT_SCORE": 0.5, "OCR_THREADS": 2,
+  "OCR_KEYWORDS_FOR_FULL_SCORE": 2,
+  "OCR_FUZZY_THRESHOLD": 0.85,
+  "SHOW_FPS": true,
+  "TOAST_SECONDS": 3.5,
+  "ENABLE_SOUND": true,
+  "SOUND_FREQ_HZ": 1800,
+  "SOUND_DURATION_MS": 110,
+  "SOUND_VOLUME": 1.0
+}

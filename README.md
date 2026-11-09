@@ -2,7 +2,50 @@
 
 Protótipo de ponto de venda que usa a câmera para reconhecer embalagens e montar o carrinho. A interface em português mostra o vídeo, o progresso da leitura, o seletor de câmera e o total em reais.
 
-## Abrir no Windows
+## Versão Rust para Windows x64
+
+Esta branch contém o caixa em Rust. Baixe `CaixaVisaoComputacional-Windows-Rust-x64.zip` na release `rust-v0.1.0`, extraia todos os arquivos para uma pasta local e abra `CaixaVisaoComputacional.exe`. O pacote inclui os modelos e as DLLs necessários. A instalação exige Windows x64 com Media Foundation, uma câmera disponível e um driver gráfico com suporte a OpenGL. O caixa abre em tela cheia.
+
+O fluxo de operação é o mesmo da versão Python. Selecione ou atualize a câmera, ajuste a confiança com **−** e **+**, e apresente um produto. O carrinho mostra quantidade, preço e subtotal. **Remover** exclui a linha e **Nova compra** exibe o total e limpa o carrinho. Marque **Finalizar compra com gesto (2 mãos)** para usar o gesto treinado. Use `Esc` para sair.
+
+- A interface é desenhada em egui. O Windows Media Foundation captura os quadros em uma tarefa separada. O modo **Vídeo fluido** alterna entre o quadro mais recente e o quadro usado pelo detector.
+- O YOLO26 executa o mesmo `best.onnx` em CPU pelo ONNX Runtime. A entrada é ajustada ao tamanho fixo do modelo com preenchimento e as coordenadas das caixas são projetadas de volta para o quadro original.
+- O OCR usa modelos PP-OCRv4 de detecção e reconhecimento distribuídos pelo RapidOCR. A preparação da imagem, a localização dos trechos de texto, a decodificação e a pontuação são implementadas em Rust. A leitura usa o recorte do YOLO por padrão. O resultado pode variar com relação ao motor RapidOCR em Python, especialmente em texto invertido.
+- O MediaPipe Tasks é chamado pela interface C. A normalização dos 21 pontos de cada mão é igual à da versão Python. O Rust executa os pesos exportados da MLP e usa o mesmo limiar e tempo de confirmação do gesto.
+
+Rode o executável com `--debug` para ver as pontuações do YOLO, do desempate pelo centro e do OCR. Para alterar valores suportados sem compilar, copie `config_override.example.json` para `config_override.json` ao lado do executável. As chaves aceitas estão em [rust/defaults.json](rust/defaults.json). O catálogo é a chave `PRODUCTS` e as palavras de OCR ficam em `ocr_keywords.json`.
+
+### Compilar e empacotar
+
+Use Rust com alvo `x86_64-pc-windows-msvc`, Visual Studio Build Tools com C++ e o Windows SDK. Rode a partir da raiz do repositório.
+
+```powershell
+cargo build --release --locked
+cargo test --release --locked
+python -m venv .release-work/venv
+$py = '.release-work/venv/Scripts/python.exe'
+& $py -m pip install --no-deps 'mediapipe==1.0.1' 'onnxruntime==1.27.0'
+& $py -m pip download --no-deps 'rapidocr-onnxruntime==1.4.4' -d .release-work
+```
+
+O ambiente Python acima serve para obter as bibliotecas nativas, avisos e modelos. O executável Rust roda sem Python. Baixe a licença do RapidOCR como `.release-work/RapidOCR-LICENSE.txt`. Use o caminho do redistribuível x64 do Visual C++ instalado com o Visual Studio em `$crt`. A pasta deve conter `msvcp140.dll`, `msvcp140_1.dll`, `vcruntime140.dll` e `vcruntime140_1.dll`. [Licença do RapidOCR](https://github.com/RapidAI/RapidOCR/blob/main/LICENSE)
+
+```powershell
+$site = '.release-work/venv/Lib/site-packages'
+./rust/package.ps1 `
+  -MediaPipeDll "$site/mediapipe/tasks/c/libmediapipe.dll" `
+  -MediaPipeNotices "$site/mediapipe-1.0.1.dist-info/licenses" `
+  -OnnxRuntimeDir "$site/onnxruntime" `
+  -VcRuntimeDir $crt `
+  -OcrWheel '.release-work/rapidocr_onnxruntime-1.4.4-py3-none-any.whl' `
+  -OcrLicense '.release-work/RapidOCR-LICENSE.txt'
+```
+
+O script monta a distribuição em `.release-work`, gera o ZIP e escreve o SHA-256 ao lado. A exportação `rust/gesture_mlp.json` já está versionada. Depois de treinar uma nova MLP com a ferramenta Python, execute `python rust/tools/export_gesture.py Programa/modelo/gesture_model.joblib rust/gesture_mlp.json` num ambiente com joblib e scikit-learn compatíveis com o modelo.
+
+Os modos de diagnóstico `--check-models`, `--check-camera`, `--check-image caminho.png` e `--check-ocr caminho.png` testam os modelos, a captura ou uma imagem conhecida. Eles devolvem um código de saída e escrevem em stdout ou stderr, capturáveis via redirecionamento do processo no PowerShell.
+
+## Abrir a versão Python no Windows
 
 1. Baixe `CaixaVisaoComputacional-Windows-Python.zip` na seção **Releases** deste repositório.
 2. Extraia o ZIP por inteiro para uma pasta local e abra `CaixaVisaoComputacional.exe`. Mantenha `_internal`, `modelo` e `ocr_keywords.json` junto do executável.
