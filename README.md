@@ -4,13 +4,14 @@ Protótipo de ponto de venda que usa a câmera para reconhecer embalagens e mont
 
 ## Versão Rust para Windows x64
 
-Esta branch contém o caixa em Rust. Baixe `CaixaVisaoComputacional-Windows-Rust-x64.zip` na release `rust-v0.2.0`, extraia todos os arquivos para uma pasta local e abra `CaixaVisaoComputacional.exe`. O pacote inclui os modelos e as DLLs necessários. A instalação exige Windows x64 com Media Foundation, uma câmera disponível e um driver gráfico com suporte a OpenGL. O caixa abre em tela cheia, sem moldura.
+Esta branch contém o caixa em Rust. Baixe `CaixaVisaoComputacional-Windows-Rust-x64.zip` na release `rust-v0.2.1`, extraia todos os arquivos para uma pasta local e abra `CaixaVisaoComputacional.exe`. O pacote inclui os modelos e as DLLs necessários. A instalação exige Windows x64 com Media Foundation, uma câmera disponível e um driver gráfico com suporte a OpenGL. O caixa abre em tela cheia, sem moldura.
 
 O fluxo de operação é o mesmo da versão Python. Selecione ou atualize a câmera, ajuste a confiança com **−** e **+**, e apresente um produto. O carrinho mostra quantidade, preço e subtotal. **Remover** exclui a linha e **Nova compra** exibe o total e limpa o carrinho. Marque **Finalizar compra com gesto (2 mãos)** para usar o gesto treinado. Use `Esc` para sair.
 
 - A interface usa a disposição da versão Python, com o vídeo à esquerda, os cartões à direita, a tabela do carrinho e as barras de progresso. O Windows Media Foundation captura os quadros em uma tarefa separada. O modo **Vídeo fluido** alterna entre o quadro mais recente e o quadro usado pelo detector.
 - O YOLO26 usa ONNX Runtime ou OpenVINO em CPU. A entrada é ajustada ao tamanho fixo do modelo com preenchimento e as coordenadas das caixas são projetadas de volta para o quadro original.
 - O OCR usa modelos PP-OCRv4 de detecção e reconhecimento distribuídos pelo RapidOCR. A preparação da imagem, a localização dos trechos de texto, a decodificação e a pontuação são implementadas em Rust. A leitura usa o recorte do YOLO por padrão. O resultado pode variar com relação ao motor RapidOCR em Python, especialmente em texto invertido.
+- Quando o OCR confirma o mesmo produto que o YOLO na leitura atual, o item entra no carrinho assim que o texto é reconhecido. Em caso de empate entre produtos, divergência ou falta de OCR, vale a espera de 1,5 s. O intervalo contra duplicidade vale nos dois casos.
 - O MediaPipe Tasks é chamado pela interface C. A normalização dos 21 pontos de cada mão é igual à da versão Python. O Rust executa os pesos exportados da MLP e usa o mesmo limiar e tempo de confirmação do gesto.
 
 Rode o executável com `--debug` para ver as pontuações do YOLO, do desempate pelo centro e do OCR. Para alterar valores suportados sem compilar, copie `config_override.example.json` para `config_override.json` ao lado do executável. As chaves aceitas estão em [rust/defaults.json](rust/defaults.json). O catálogo é a chave `PRODUCTS` e as palavras de OCR ficam em `ocr_keywords.json`.
@@ -63,13 +64,13 @@ Os modos de diagnóstico `--check-fullscreen`, `--check-models`, `--check-camera
 
 O pacote inclui o ambiente do aplicativo. O computador precisa de Windows de 64 bits e acesso a uma câmera. Na execução por código-fonte, instale as dependências abaixo.
 
-O ZIP Python de 3 de novembro está sem o arquivo de configuração do RapidOCR. A leitura de rótulos por OCR fica indisponível nesse pacote.
+O ZIP Python atual inclui os modelos de OCR. Na release de 3 de novembro, faltava um arquivo de configuração do RapidOCR.
 
 ## Como a leitura funciona
 
 - A captura e a inferência rodam em tarefas separadas. O modo **Vídeo fluido** exibe o quadro mais recente com a última detecção. Desmarque para exibir cada quadro junto de sua própria inferência.
 - O YOLO26 analisa o quadro usando `Programa/modelo/best.onnx`. O aplicativo considera classes do catálogo em `Programa/config.py`. A pontuação soma até 40 pontos pela confiança do YOLO e até 5 pelo desempate pela posição no quadro. Quando o OCR está disponível e ativado, palavras do rótulo somam até 60 pontos, segundo `ocr_keywords.json`.
-- A confiança mínima começa em 60% e pode ser ajustada com `−` e `+`. Uma classe precisa permanecer como candidata por 1,5 s. Depois de adicionar o produto, o caixa espera 2,5 s. A mesma classe só volta a ser elegível depois de sair da cena pelo intervalo configurado.
+- A confiança mínima começa em 60% e pode ser ajustada com `−` e `+`. Quando o YOLO e uma leitura atual do OCR confirmam o mesmo produto, ele entra no carrinho assim que o OCR responde. Em caso de divergência, empate ou OCR indisponível, a classe precisa permanecer como candidata por 1,5 s. Depois de adicionar o produto, o caixa espera 2,5 s. A mesma classe só volta a ser elegível depois de sair da cena pelo intervalo configurado.
 - O gesto é opcional e começa desativado. O MediaPipe Hand Landmarker extrai 21 pontos em três dimensões de cada mão. O programa normaliza os pontos pelo pulso e pelo tamanho da palma, ordena esquerda e direita e envia 126 valores ao classificador MLP treinado. Com as duas mãos e confiança de pelo menos 80% por 1,5 s, o gesto aciona o mesmo fechamento de **Nova compra**.
 - `--debug` abre o painel de pontuação e OCR. Preços e parâmetros ficam em `config.py`. Para sobrescrever parâmetros em uma instalação, copie `Programa/config_override.example.json` para `config_override.json` ao lado do executável e reinicie.
 

@@ -1,5 +1,10 @@
 # Histórico de versões
 
+## rust-v0.2.1
+
+- Lança o item no carrinho assim que uma leitura atual do OCR confirma o produto reconhecido pelo YOLO.
+- Mantém a espera de detecção em caso de divergência, empate entre produtos ou falta de confirmação. O intervalo contra duplicidade vale para ambos os caminhos.
+
 ## rust-v0.2.0
 
 - Abertura sem moldura, com a área do caixa ocupando o monitor e `Esc` para sair.
@@ -12,6 +17,12 @@
 - Inferência YOLO26 pelo ONNX Runtime, captura pelo Media Foundation, OCR local com modelos PP-OCRv4 e rastreamento de mãos via MediaPipe Tasks.
 - Exportação da MLP treinada e inferência em Rust com os mesmos 126 valores de entrada. O gesto e o botão **Nova compra** compartilham o fechamento do carrinho.
 - ZIP portátil, verificação SHA-256, instruções de compilação e modos de diagnóstico para câmera e modelos.
+
+## python-2026.11.09
+
+- Lança o item no carrinho assim que YOLO e uma leitura atual e sem empate do OCR confirmam o mesmo produto.
+- Mantém o tempo de detecção nos outros casos e o intervalo contra duplicidade após cada lançamento.
+- Inclui os modelos e arquivos de configuração do RapidOCR no pacote PyInstaller.
 
 ## python-2026.11.03
 
