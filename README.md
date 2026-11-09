@@ -10,6 +10,8 @@ Protótipo de ponto de venda que usa a câmera para reconhecer embalagens e mont
 
 O pacote inclui o ambiente do aplicativo. O computador precisa de Windows de 64 bits e acesso a uma câmera. Na execução por código-fonte, instale as dependências abaixo.
 
+O ZIP Python de 3 de novembro está sem o arquivo de configuração do RapidOCR. A leitura de rótulos por OCR fica indisponível nesse pacote.
+
 ## Como a leitura funciona
 
 - A captura e a inferência rodam em tarefas separadas. O modo **Vídeo fluido** exibe o quadro mais recente com a última detecção. Desmarque para exibir cada quadro junto de sua própria inferência.
