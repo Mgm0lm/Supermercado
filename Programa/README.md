@@ -199,6 +199,13 @@ python main.py
 
 - `ESC` fecha o programa.
 - `python main.py --debug` mostra o painel com a pontuação de cada classe (seção 3.3).
+- `python main.py --zone` permite arrastar um retângulo sobre o vídeo para
+  delimitar a área que o YOLO analisa. O contorno some ao soltar o mouse.
+  Use **Redefinir área de detecção** para desenhar outra área.
+- `python main.py --hand-block` impede o lançamento de itens enquanto o
+  MediaPipe detectar qualquer mão no quadro da câmera. A espera de
+  confirmação recomeça após retirar a mão. Isso vale também para a
+  confirmação imediata por OCR e funciona com a finalização por gesto desativada.
 - "Nova compra" limpa o carrinho na hora (sem confirmação) e mostra um
   aviso que some sozinho em `TOAST_SECONDS` (3.5s, em `config.py`).
 - Botões `+`/`-` ajustam a confiança mínima em tempo real.

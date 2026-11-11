@@ -18,12 +18,12 @@ from collections import deque
 
 import cv2
 import numpy as np
-from PySide6.QtCore import Qt, QRectF, QUrl, QTimer, QThread
+from PySide6.QtCore import QEvent, QPoint, QRect, QRectF, Qt, QUrl, QTimer, QThread
 from PySide6.QtGui import QImage, QPixmap, QPainterPath, QRegion, QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QLabel, QPushButton, QHBoxLayout,
     QVBoxLayout, QFrame, QComboBox, QProgressBar, QTableWidget,
-    QTableWidgetItem, QHeaderView, QMessageBox, QCheckBox, QSizePolicy
+    QTableWidgetItem, QHeaderView, QMessageBox, QCheckBox, QSizePolicy, QRubberBand
 )
 
 import config
@@ -41,6 +41,9 @@ try:
     _SOUND_AVAILABLE = True
 except Exception:
     _SOUND_AVAILABLE = False
+
+
+HAND_RESULT_TIMEOUT = 1.0
 
 
 def cfg(name, default):
@@ -147,7 +150,7 @@ def draw_fps_overlay(frame, cam_fps, det_fps):
 
 
 class MainWindow(QMainWindow):
-    def __init__(self, debug=False):
+    def __init__(self, debug=False, zone=False, hand_block=False):
         super().__init__()
         self.debug = debug  # --debug: mostra o painel de pontuacao
         self.setWindowTitle(config.APP_TITLE)
@@ -158,6 +161,13 @@ class MainWindow(QMainWindow):
         self.shared_frame = SharedFrame()
         self.conf_threshold = config.CONF_THRESHOLD_DEFAULT
         self.desync_enabled = config.DESYNC_BBOXES
+        self.zone_enabled = zone
+        self.zone_pending = False
+        self.zone_revision = 0
+        self.zone_start = None
+        self.hand_block = hand_block
+        self.hand_sample = None
+        self.hand_ignore_before = 0.0
 
         self.last_detections = []           # usado no modo desincronizado
         self.candidate_class = None
@@ -200,7 +210,7 @@ class MainWindow(QMainWindow):
         self._build_ui()
         self._start_camera(self.camera_combo.currentData())
         self._start_detector()
-        if self.gesture_enabled:
+        if self.gesture_enabled or self.hand_block:
             self._start_gesture_worker()
 
     def _init_sound(self):
@@ -259,6 +269,10 @@ class MainWindow(QMainWindow):
         self.video_label.setAlignment(Qt.AlignCenter)
         self.video_label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         self.video_label.setMinimumSize(480, 360)
+        if self.zone_enabled:
+            self.video_label.installEventFilter(self)
+            self.zone_outline = QRubberBand(QRubberBand.Shape.Rectangle, self.video_label)
+            self.zone_outline.setAttribute(Qt.WA_TransparentForMouseEvents)
         left_col.addWidget(self.video_label, stretch=1)
 
         status_row = QHBoxLayout()
@@ -407,6 +421,11 @@ class MainWindow(QMainWindow):
         row.addWidget(refresh_btn)
         lay.addLayout(row)
 
+        if self.zone_enabled:
+            zone_button = QPushButton("Redefinir área de detecção")
+            zone_button.clicked.connect(self._begin_zone_selection)
+            lay.addWidget(zone_button)
+
         self.desync_checkbox = QCheckBox("Vídeo fluido (caixas desincronizadas)")
         self.desync_checkbox.setChecked(self.desync_enabled)
         self.desync_checkbox.stateChanged.connect(self._on_desync_toggled)
@@ -502,8 +521,20 @@ class MainWindow(QMainWindow):
     # CAMERA / DETECTOR
     # ------------------------------------------------------------------
     def _start_camera(self, index):
-        self._invalidate_ocr(time.time())
         self.shared_frame.clear()
+        self.video_label.clear()
+        self.last_detections = []
+        self._reset_candidate()
+        if self.zone_enabled:
+            self._begin_zone_selection()
+        else:
+            self.zone_revision += 1
+            if self.detection_worker is not None:
+                self.detection_worker.set_zone(None, self.zone_revision)
+            self._invalidate_ocr(time.time())
+        self.hand_ignore_before = time.monotonic()
+        self.hand_sample = None
+        self.last_hand_landmarks = None
         self.camera_worker = CameraWorker(
             index, config.CAMERA_FPS_TARGET,
             config.CAMERA_FRAME_WIDTH, config.CAMERA_FRAME_HEIGHT,
@@ -527,6 +558,7 @@ class MainWindow(QMainWindow):
             config.MODEL_PATH, self.shared_frame, self.conf_threshold,
             imgsz=config.INFERENCE_IMGSZ
         )
+        self.detection_worker.set_zone(None, self.zone_revision, self.zone_pending)
         self.detection_worker.detections_ready.connect(self._on_detections_ready)
         self.detection_worker.model_error.connect(self._on_model_error)
         self.detection_worker.start()
@@ -553,6 +585,7 @@ class MainWindow(QMainWindow):
         target = self.ocr_target
         if (
             self.ocr_available
+            and not self._hand_block_status()
             and target is not None
             and now >= self.cooldown_until
             and requested_at >= self.ocr_target_since
@@ -591,7 +624,7 @@ class MainWindow(QMainWindow):
         self.ocr_input.clear()
 
     def _start_gesture_worker(self):
-        if not os.path.exists(config.GESTURE_MODEL_PATH):
+        if not self.hand_block and not os.path.exists(config.GESTURE_MODEL_PATH):
             QMessageBox.warning(
                 self, "Modelo de gesto não encontrado",
                 f"Não encontrei o modelo de gesto em:\n{config.GESTURE_MODEL_PATH}\n\n"
@@ -603,9 +636,10 @@ class MainWindow(QMainWindow):
             self.gesture_enabled = False
             return
 
-        self.gesture_worker = GestureWorker(self.shared_frame)
+        self.gesture_worker = GestureWorker(self.shared_frame, hand_block=self.hand_block)
         self.gesture_worker.gesture_status.connect(self._on_gesture_status)
         self.gesture_worker.model_error.connect(self._on_gesture_error)
+        self.gesture_worker.classifier_error.connect(self._on_gesture_classifier_error)
         self.gesture_worker.start()
 
     def _stop_gesture_worker(self):
@@ -614,6 +648,7 @@ class MainWindow(QMainWindow):
             self.gesture_worker.wait(1500)
             self.gesture_worker = None
         self.last_hand_landmarks = None
+        self.hand_sample = None
         self.gesture_hold_start = None
         self.gesture_status_label.setText("")
         self.gesture_progress_bar.setValue(0)
@@ -625,6 +660,13 @@ class MainWindow(QMainWindow):
         self.gesture_enabled = False
         self._stop_gesture_worker()
         QMessageBox.critical(self, "Erro no gesto", msg)
+
+    def _on_gesture_classifier_error(self, msg):
+        if not self.hand_block:
+            self._on_gesture_error(msg)
+        elif self.gesture_enabled:
+            self.gesture_checkbox.setChecked(False)
+            self._show_toast(msg, seconds=6)
 
     def _refresh_cameras(self):
         self.camera_combo.blockSignals(True)
@@ -648,9 +690,13 @@ class MainWindow(QMainWindow):
         self.gesture_status_label.setVisible(self.gesture_enabled)
         self.gesture_progress_bar.setVisible(self.gesture_enabled)
         if self.gesture_enabled:
-            self._start_gesture_worker()
-        else:
+            if self.gesture_worker is None:
+                self._start_gesture_worker()
+        elif not self.hand_block:
             self._stop_gesture_worker()
+        else:
+            self.gesture_hold_start = None
+            self.gesture_progress_bar.setValue(0)
 
     def _change_threshold(self, delta):
         new_val = round(self.conf_threshold + delta, 2)
@@ -674,11 +720,15 @@ class MainWindow(QMainWindow):
     # LOOP DE VIDEO
     # ------------------------------------------------------------------
     def _on_frame_ready(self, frame, frame_id):
+        if self.sender() is not self.camera_worker:
+            return
         self.cam_fps_counter.tick()
-        if self.desync_enabled:
+        if self.desync_enabled or self.zone_pending:
             self._render_frame(frame, self.last_detections)
 
-    def _on_detections_ready(self, detections, frame, frame_id):
+    def _on_detections_ready(self, detections, frame, frame_id, revision):
+        if self.zone_pending or revision != self.zone_revision:
+            return
         self.det_fps_counter.tick()
         if not self.desync_enabled:
             self._render_frame(frame, detections)
@@ -687,6 +737,58 @@ class MainWindow(QMainWindow):
 
         self._update_cart_logic(detections, frame)
         self._update_message()
+
+    def _begin_zone_selection(self):
+        self.zone_revision += 1
+        self.zone_pending = True
+        self.zone_start = None
+        self.zone_outline.hide()
+        self.video_label.setCursor(Qt.CrossCursor)
+        if self.detection_worker is not None:
+            self.detection_worker.set_zone(None, self.zone_revision, pending=True)
+        self.last_detections = []
+        self.blocked.clear()
+        self._reset_candidate()
+        self._invalidate_ocr(time.time())
+        self.progress_bar.setValue(0)
+        self.status_label.setText("Arraste sobre o vídeo para delimitar a área do YOLO.")
+
+    def eventFilter(self, obj, event):
+        if self.zone_pending and obj is self.video_label:
+            kind = event.type()
+            if kind in (QEvent.MouseButtonPress, QEvent.MouseMove, QEvent.MouseButtonRelease):
+                pixmap = self.video_label.pixmap()
+                if not pixmap.isNull():
+                    image = QRect(QPoint(), pixmap.size())
+                    image.moveCenter(self.video_label.contentsRect().center())
+                    point = event.position().toPoint()
+                    if kind == QEvent.MouseButtonPress and event.button() == Qt.LeftButton:
+                        if image.contains(point):
+                            self.zone_start = point
+                        return True
+                    if self.zone_start is not None:
+                        selection = QRect(self.zone_start, point).normalized().intersected(image)
+                        if kind == QEvent.MouseMove:
+                            self.zone_outline.setGeometry(selection)
+                            self.zone_outline.show()
+                        elif event.button() == Qt.LeftButton:
+                            self.zone_start = None
+                            self.zone_outline.hide()
+                            if selection.width() >= 8 and selection.height() >= 8:
+                                left = (selection.x() - image.x()) / image.width()
+                                top = (selection.y() - image.y()) / image.height()
+                                right = left + selection.width() / image.width()
+                                bottom = top + selection.height() / image.height()
+                                self.zone_pending = False
+                                self.video_label.unsetCursor()
+                                if self.detection_worker is not None:
+                                    self.detection_worker.set_zone(
+                                        (left, top, min(right, 1.0), min(bottom, 1.0)),
+                                        self.zone_revision,
+                                    )
+                                self.status_label.setText("Aguardando produto...")
+                        return True
+        return super().eventFilter(obj, event)
 
     def _render_frame(self, frame_bgr, detections):
         frame_with_boxes = draw_detections(frame_bgr, detections, self.candidate_class)
@@ -743,13 +845,14 @@ class MainWindow(QMainWindow):
         ]
         top = max(unblocked, key=lambda d: d.conf, default=None)
         target = top.cls_name if top is not None else None
-        if target != self.ocr_target:
+        hand_status = self._hand_block_status()
+        if not hand_status and target != self.ocr_target:
             self.ocr_target = target
             self.ocr_target_since = now
 
         # alimenta o OCR (ignora o que já foi adicionado e continua na cena)
         use_crop = cfg("OCR_USE_BOX_CROP", True)
-        if cfg("ENABLE_OCR", True) and self.ocr_available:
+        if not hand_status and cfg("ENABLE_OCR", True) and self.ocr_available:
             if top is not None:
                 self.ocr_input.set(frame, top.box if use_crop else None)
             elif not valid:
@@ -766,6 +869,9 @@ class MainWindow(QMainWindow):
         scores = scoring.compute_scores(valid, (w, h), ocr_matches)
         min_total = scoring.min_total_for_conf(self.conf_threshold)
         self._update_blocked(scores, min_total, now)
+        if hand_status:
+            self._pause_for_hand(hand_status, now)
+            return
         candidates = {c: s for c, s in scores.items() if c not in self.blocked}
         winner = scoring.pick_winner(candidates, min_total)
         self._update_debug_panel(scores, winner, min_total, now)
@@ -802,6 +908,23 @@ class MainWindow(QMainWindow):
         self.candidate_class = None
         self.candidate_start = None
 
+    def _hand_block_status(self):
+        if not self.hand_block:
+            return ""
+        if self.hand_sample is None or time.monotonic() - self.hand_sample >= HAND_RESULT_TIMEOUT:
+            return "Aguardando leitura de mãos..."
+        if self.last_hand_landmarks:
+            return "Retire a mão para confirmar o produto."
+        return ""
+
+    def _pause_for_hand(self, status, now):
+        self._reset_candidate()
+        if self.ocr_target is not None or self.ocr_updated_at is not None:
+            self._invalidate_ocr(now)
+        if not self.zone_pending:
+            self.status_label.setText(status)
+            self.progress_bar.setValue(0)
+
     def _add_to_cart(self, class_name):
         self.cart.add(class_name)
         self._refresh_cart_table()
@@ -837,9 +960,16 @@ class MainWindow(QMainWindow):
     # ------------------------------------------------------------------
     # GESTO PARA FINALIZAR COMPRA
     # ------------------------------------------------------------------
-    def _on_gesture_status(self, is_gesture, confidence, landmarks):
+    def _on_gesture_status(self, is_gesture, confidence, landmarks, sampled):
+        if sampled is not None and sampled < self.hand_ignore_before:
+            return
         self.last_hand_landmarks = landmarks
+        self.hand_sample = sampled
         now = time.time()
+        if (status := self._hand_block_status()):
+            self._pause_for_hand(status, now)
+        if not self.gesture_enabled:
+            return
 
         if now < self.gesture_cooldown_until:
             self.gesture_hold_start = None
@@ -913,6 +1043,10 @@ def parse_args():
     parser = argparse.ArgumentParser(description=config.APP_TITLE)
     parser.add_argument("--debug", action="store_true",
                         help="mostra o painel com a pontuação (YOLO + OCR) de cada classe")
+    parser.add_argument("--zone", action="store_true",
+                        help="permite delimitar a área do YOLO no vídeo")
+    parser.add_argument("--hand-block", action="store_true",
+                        help="bloqueia a confirmação de itens enquanto o MediaPipe detectar mãos")
     return parser.parse_known_args()  # o resto vai pro Qt
 
 
@@ -929,7 +1063,7 @@ def main():
     logging.info("MODEL_PATH resolvido para: %s (existe: %s) | debug=%s",
                  config.MODEL_PATH, os.path.exists(config.MODEL_PATH), args.debug)
     app = QApplication([sys.argv[0]] + qt_args)
-    window = MainWindow(debug=args.debug)
+    window = MainWindow(debug=args.debug, zone=args.zone, hand_block=args.hand_block)
     window.showFullScreen()
     sys.exit(app.exec())
 

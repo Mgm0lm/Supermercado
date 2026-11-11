@@ -68,7 +68,6 @@ class SharedFrame:
     def clear(self):
         with self._lock:
             self._frame = None
-            self._frame_id = 0
 
 
 class CameraWorker(QThread):

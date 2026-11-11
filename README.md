@@ -12,6 +12,17 @@ O pacote inclui o ambiente do aplicativo. O computador precisa de Windows de 64 
 
 O ZIP Python atual inclui os modelos de OCR. Na release de 3 de novembro, faltava um arquivo de configuração do RapidOCR.
 
+## Delimitar a leitura e aguardar a retirada da mão
+
+Os executáveis Python e Rust aceitam as duas opções, que podem ser combinadas no PowerShell.
+
+```powershell
+.\CaixaVisaoComputacional.exe --zone --hand-block
+```
+
+- `--zone` pausa o YOLO até você arrastar um retângulo sobre o vídeo. Ao soltar, o contorno some e o YOLO passa a analisar somente aquele recorte. Use **Redefinir área de detecção** para selecionar outra região. Ao trocar de câmera ou reiniciar, selecione a área novamente.
+- `--hand-block` usa o MediaPipe no quadro inteiro da câmera. Enquanto houver uma mão detectada ou faltar uma leitura recente, o caixa pausa o lançamento, inclusive quando o OCR confirma o YOLO. Ao retirar a mão, a leitura do item recomeça. A opção funciona com o fechamento por gesto desativado.
+
 ## Como a leitura funciona
 
 - A captura e a inferência rodam em tarefas separadas. O modo **Vídeo fluido** exibe o quadro mais recente com a última detecção. Desmarque para exibir cada quadro junto de sua própria inferência.

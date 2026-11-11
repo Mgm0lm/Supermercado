@@ -1,5 +1,10 @@
 # Histórico de versões
 
+## python-2026.11.11
+
+- `--zone` delimita a área de leitura do YOLO com um retângulo que some após a seleção.
+- `--hand-block` impede o lançamento de produtos enquanto o MediaPipe detectar uma mão, inclusive na confirmação imediata por OCR.
+
 ## python-2026.11.09
 
 - Lança o item no carrinho assim que YOLO e uma leitura atual e sem empate do OCR confirmam o mesmo produto.
