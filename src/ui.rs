@@ -1,7 +1,7 @@
 use crate::{
     checkout::{self, Checkout, Keywords, Score},
     config::{Config, Result},
-    workers::{self, Found, Frame, Gesture, OcrRequest, OcrText, Workers},
+    workers::{self, Found, Frame, Gesture, OcrRequest, OcrText, Workers, Zone},
 };
 use eframe::egui::{
     self, Align, Align2, Color32, CornerRadius, FontFamily, FontId, Frame as Card, Layout, Rect,
@@ -35,6 +35,9 @@ pub struct App {
     workers: Workers,
     checkout: Checkout,
     debug: bool,
+    zone_enabled: bool,
+    zone_start: Option<egui::Pos2>,
+    hand_block: bool,
     desync: bool,
     started: Instant,
     threshold: f32,
@@ -64,6 +67,8 @@ impl App {
         base: &Path,
         cfg: Config,
         debug: bool,
+        zone_enabled: bool,
+        hand_block: bool,
         fullscreen_probe: Option<Rc<Cell<bool>>>,
     ) -> Result<Self> {
         let mut keywords =
@@ -86,7 +91,12 @@ impl App {
         style.spacing.button_padding = Vec2::new(8.0, 4.0);
         context.set_style(style);
         set_fonts(context);
-        let workers = workers::start(&cfg, base);
+        let zone = if zone_enabled {
+            Zone::Selecting
+        } else {
+            Zone::Disabled
+        };
+        let workers = workers::start(&cfg, base, zone, hand_block);
         let threshold = cfg
             .conf_threshold_default
             .clamp(cfg.conf_threshold_min, cfg.conf_threshold_max);
@@ -96,6 +106,9 @@ impl App {
             workers,
             checkout: Checkout::default(),
             debug,
+            zone_enabled,
+            zone_start: None,
+            hand_block,
             started: Instant::now(),
             threshold,
             keywords,
@@ -197,7 +210,13 @@ impl App {
         ));
     }
 
-    fn update_product(&mut self, found: &Arc<Found>, ocr: Option<&OcrText>, now: f64) {
+    fn update_product(
+        &mut self,
+        found: &Arc<Found>,
+        ocr: Option<&OcrText>,
+        now: f64,
+        hand_blocked: bool,
+    ) {
         let new_detection = self.detection_id != found.frame.id;
         if new_detection {
             self.detection_id = found.frame.id;
@@ -215,6 +234,25 @@ impl App {
         let best = valid
             .filter(|d| !self.checkout.blocked.contains_key(&d.class))
             .max_by(|a, b| a.confidence.total_cmp(&b.confidence));
+        if hand_blocked {
+            self.scores = checkout::scores(
+                &self.cfg,
+                &found.detections,
+                found.frame.pixels.dimensions(),
+                self.threshold,
+                "",
+                &self.keywords,
+            );
+            if new_detection && now >= self.checkout.cooldown_until {
+                self.checkout.observe_blocked(
+                    now,
+                    &self.cfg,
+                    self.threshold * self.cfg.score_yolo_max_points,
+                    &self.scores,
+                );
+            }
+            return;
+        }
         if new_detection
             && self.ocr_target.as_ref().map(|(class, _)| class.as_str())
                 != best.map(|d| d.class.as_str())
@@ -303,6 +341,15 @@ impl App {
         }
     }
 
+    fn begin_zone_selection(&mut self) {
+        self.workers.lock().unwrap().set_zone(Zone::Selecting);
+        self.zone_start = None;
+        self.checkout.candidate = None;
+        self.checkout.blocked.clear();
+        self.scores.clear();
+        self.reset_ocr();
+    }
+
     fn camera_card(&mut self, ui: &mut Ui, now: f64) {
         card(ui, |ui| {
             label_row(ui, "Câmera", 14.0, 19.0);
@@ -350,6 +397,9 @@ impl App {
             });
             if initial != camera {
                 self.workers.lock().unwrap().select_camera(camera);
+            }
+            if self.zone_enabled && ui.button("Redefinir área de detecção").clicked() {
+                self.begin_zone_selection();
             }
             if checkbox(ui, &mut gesture, "Finalizar compra com gesto (2 mãos)") {
                 let mut state = self.workers.lock().unwrap();
@@ -609,6 +659,7 @@ impl App {
         found: Option<&Found>,
         gesture: Option<&Gesture>,
         error: &str,
+        selecting_zone: bool,
     ) {
         ui.spacing_mut().item_spacing.y = 10.0;
         let title = if self.checkout.candidate.is_some() {
@@ -690,6 +741,12 @@ impl App {
                     0
                 })
                 .paint_at(ui, image);
+            if selecting_zone && let Some(bounds) = select_zone(ui, image, &mut self.zone_start) {
+                let mut state = self.workers.lock().unwrap();
+                if state.camera_epoch == self.camera_epoch {
+                    state.set_zone(Zone::Selected(bounds));
+                }
+            }
             let point = |x, y| image.left_top() + Vec2::new(x * scale, y * scale);
             let painter = ui.painter().with_clip_rect(image);
             if let Some(found) = found {
@@ -769,7 +826,9 @@ impl App {
         ui.painter().with_clip_rect(status).text(
             status.left_center(),
             Align2::LEFT_CENTER,
-            if error.is_empty() {
+            if selecting_zone && frame.is_some() {
+                "Arraste sobre o vídeo para delimitar a área do YOLO."
+            } else if error.is_empty() {
                 &self.status
             } else {
                 error
@@ -793,7 +852,7 @@ impl eframe::App for App {
             ctx.send_viewport_cmd(egui::ViewportCommand::Close);
         }
         let now = self.started.elapsed().as_secs_f64();
-        let (epoch, frame, found, gesture, ocr, error, ocr_error) = {
+        let (epoch, frame, found, gesture, ocr, error, ocr_error, selecting_zone, gesture_enabled) = {
             let state = self.workers.lock().unwrap();
             let error = if !state.camera_error.is_empty() {
                 &state.camera_error
@@ -808,6 +867,8 @@ impl eframe::App for App {
                 state.ocr.clone(),
                 error.clone(),
                 state.ocr_error.clone(),
+                matches!(state.zone, Zone::Selecting),
+                state.gesture_enabled,
             )
         };
         let new_frame = frame
@@ -820,6 +881,12 @@ impl eframe::App for App {
             .as_ref()
             .filter(|g| g.frame.captured.elapsed() < Duration::from_secs(1));
         if epoch != self.camera_epoch || new_found.is_none() {
+            if epoch != self.camera_epoch {
+                self.zone_start = None;
+                if self.zone_enabled {
+                    self.checkout.blocked.clear();
+                }
+            }
             if epoch != self.camera_epoch || self.ocr_target.is_some() {
                 self.reset_ocr();
             }
@@ -841,8 +908,27 @@ impl eframe::App for App {
                 self.camera_fps,
             );
         }
+        let hand_status = if self.hand_block {
+            match gesture {
+                None => Some("Aguardando leitura de mãos..."),
+                Some(result) if !result.hands.is_empty() => {
+                    Some("Retire a mão para confirmar o produto.")
+                }
+                _ => None,
+            }
+        } else {
+            None
+        };
+        if let Some(status) = hand_status {
+            self.checkout.candidate = None;
+            if self.ocr_target.is_some() || ocr.is_some() {
+                self.reset_ocr();
+            }
+            self.status = status.into();
+        }
         let fresh_ocr = ocr.as_ref().filter(|o| {
-            o.token == self.ocr_token
+            hand_status.is_none()
+                && o.token == self.ocr_token
                 && o.finished.elapsed().as_secs_f64() <= self.cfg.ocr_result_ttl_seconds
         });
         let new_ocr = fresh_ocr.is_some_and(|ocr| ocr.frame_id != self.last_ocr_frame);
@@ -850,8 +936,14 @@ impl eframe::App for App {
             self.last_ocr_frame = ocr.frame_id;
         }
         if let Some(found) = new_found.filter(|f| f.frame.id != self.detection_id || new_ocr) {
-            self.update_product(found, fresh_ocr.map(AsRef::as_ref), now);
+            self.update_product(
+                found,
+                fresh_ocr.map(AsRef::as_ref),
+                now,
+                hand_status.is_some(),
+            );
         }
+        let gesture = gesture.filter(|_| gesture_enabled);
         if let Some(gesture) = gesture.filter(|g| g.frame.id != self.gesture_id) {
             self.update_gesture(gesture, now);
         }
@@ -892,6 +984,7 @@ impl eframe::App for App {
                                 new_found.map(AsRef::as_ref),
                                 gesture.map(AsRef::as_ref),
                                 &error,
+                                selecting_zone,
                             );
                         },
                     );
@@ -923,6 +1016,75 @@ impl eframe::App for App {
 impl Drop for App {
     fn drop(&mut self) {
         self.workers.lock().unwrap().stop = true;
+    }
+}
+
+fn select_zone(ui: &mut Ui, image: Rect, start: &mut Option<egui::Pos2>) -> Option<[f32; 4]> {
+    let response = ui
+        .interact(image, ui.id().with("yolo-zone"), egui::Sense::drag())
+        .on_hover_cursor(egui::CursorIcon::Crosshair);
+    if response.drag_started() {
+        *start = ui.input(|input| input.pointer.press_origin());
+    }
+    if response.drag_stopped() {
+        let selection =
+            Rect::from_two_pos(start.take()?, response.interact_pointer_pos()?).intersect(image);
+        if selection.width() >= 8.0 && selection.height() >= 8.0 {
+            let min = (selection.min - image.min) / image.size();
+            let max = (selection.max - image.min) / image.size();
+            return Some([min.x, min.y, max.x, max.y]);
+        }
+    } else if response.dragged()
+        && let Some((start, pointer)) = start.zip(response.interact_pointer_pos())
+    {
+        ui.painter().rect_stroke(
+            Rect::from_two_pos(start, pointer).intersect(image),
+            0,
+            Stroke::new(2.0_f32, BLUE),
+            StrokeKind::Inside,
+        );
+    }
+    None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use egui::{Event, Modifiers, PointerButton, RawInput};
+
+    #[test]
+    fn zone_drag_clips_to_video_and_finishes_on_release() {
+        let ctx = egui::Context::default();
+        let image = Rect::from_min_size(pos2(50.0, 100.0), Vec2::new(400.0, 200.0));
+        let mut start = None;
+        let mut run = |events| {
+            let mut selected = None;
+            let _ = ctx.run(
+                RawInput {
+                    events,
+                    ..Default::default()
+                },
+                |ctx| {
+                    egui::CentralPanel::default().show(ctx, |ui| {
+                        selected = select_zone(ui, image, &mut start);
+                    });
+                },
+            );
+            selected
+        };
+        let button = |pos, pressed| Event::PointerButton {
+            pos,
+            button: PointerButton::Primary,
+            pressed,
+            modifiers: Modifiers::NONE,
+        };
+        let origin = pos2(150.0, 150.0);
+        let end = pos2(500.0, 250.0);
+        run(vec![Event::PointerMoved(origin)]);
+        assert_eq!(run(vec![button(origin, true)]), None);
+        assert_eq!(run(vec![Event::PointerMoved(end)]), None);
+        assert_eq!(run(vec![button(end, false)]), Some([0.25, 0.25, 1.0, 0.75]));
+        assert!(start.is_none());
     }
 }
 

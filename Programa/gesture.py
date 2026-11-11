@@ -25,12 +25,14 @@ logger = logging.getLogger(__name__)
 class GestureWorker(QThread):
     # gesto_reconhecido (bool), confianca (0-1), hands (lista generica de
     # mediapipe_utils.detect_hands, ou None) - so pra desenhar na tela.
-    gesture_status = Signal(bool, float, object)
+    gesture_status = Signal(bool, float, object, object)
     model_error = Signal(str)
+    classifier_error = Signal(str)
 
-    def __init__(self, shared_frame, parent=None):
+    def __init__(self, shared_frame, hand_block=False, parent=None):
         super().__init__(parent)
         self.shared_frame = shared_frame
+        self.hand_block = hand_block
         self._running = False
         self._landmarker = None
         self._mp = None
@@ -56,18 +58,21 @@ class GestureWorker(QThread):
             logger.info("Modelo de gesto carregado: %s", config.GESTURE_MODEL_PATH)
         except Exception:
             logger.exception("Falha ao carregar o modelo de gesto (%s)", config.GESTURE_MODEL_PATH)
-            self.model_error.emit(
+            self.classifier_error.emit(
                 f"Erro ao carregar o modelo de gesto ({config.GESTURE_MODEL_PATH}).\n"
                 "Rode train_gesture_model.py para gerar esse arquivo.\n"
                 "Detalhes completos foram salvos em app.log."
             )
-            return
+            if not self.hand_block:
+                self._landmarker.close()
+                return
 
         self._running = True
         last_frame_id = -1
         start_time = time.time()
 
         while self._running:
+            sampled = time.monotonic()
             frame, frame_id = self.shared_frame.get()
             if frame is None or frame_id == last_frame_id:
                 time.sleep(0.02)
@@ -79,17 +84,18 @@ class GestureWorker(QThread):
                 hands = mpu.detect_hands(self._landmarker, frame, timestamp_ms, self._mp, "VIDEO")
             except Exception:
                 logger.exception("Erro processando o gesto")
+                self.gesture_status.emit(False, 0.0, None, None)
                 time.sleep(0.3)
                 continue
 
             is_gesture, confidence = False, 0.0
-            if len(hands) == 2:
+            if self._model is not None and len(hands) == 2:
                 features = extract_features(hands)
                 if features is not None:
                     confidence = self._predict_confidence(features)
                     is_gesture = confidence >= config.GESTURE_MIN_CONFIDENCE
 
-            self.gesture_status.emit(is_gesture, confidence, hands if hands else None)
+            self.gesture_status.emit(is_gesture, confidence, hands or None, sampled)
 
         if self._landmarker is not None:
             self._landmarker.close()

@@ -4,7 +4,7 @@ Protótipo de ponto de venda que usa a câmera para reconhecer embalagens e mont
 
 ## Versão Rust para Windows x64
 
-Esta branch contém o caixa em Rust. Baixe `CaixaVisaoComputacional-Windows-Rust-x64.zip` na release `rust-v0.2.1`, extraia todos os arquivos para uma pasta local e abra `CaixaVisaoComputacional.exe`. O pacote inclui os modelos e as DLLs necessários. A instalação exige Windows x64 com Media Foundation, uma câmera disponível e um driver gráfico com suporte a OpenGL. O caixa abre em tela cheia, sem moldura.
+Esta branch contém o caixa em Rust. Baixe `CaixaVisaoComputacional-Windows-Rust-x64.zip` na release `rust-v0.2.2`, extraia todos os arquivos para uma pasta local e abra `CaixaVisaoComputacional.exe`. O pacote inclui os modelos e as DLLs necessários. A instalação exige Windows x64 com Media Foundation, uma câmera disponível e um driver gráfico com suporte a OpenGL. O caixa abre em tela cheia, sem moldura.
 
 O fluxo de operação é o mesmo da versão Python. Selecione ou atualize a câmera, ajuste a confiança com **−** e **+**, e apresente um produto. O carrinho mostra quantidade, preço e subtotal. **Remover** exclui a linha e **Nova compra** exibe o total e limpa o carrinho. Marque **Finalizar compra com gesto (2 mãos)** para usar o gesto treinado. Use `Esc` para sair.
 
@@ -65,6 +65,17 @@ Os modos de diagnóstico `--check-fullscreen`, `--check-models`, `--check-camera
 O pacote inclui o ambiente do aplicativo. O computador precisa de Windows de 64 bits e acesso a uma câmera. Na execução por código-fonte, instale as dependências abaixo.
 
 O ZIP Python atual inclui os modelos de OCR. Na release de 3 de novembro, faltava um arquivo de configuração do RapidOCR.
+
+## Delimitar a leitura e aguardar a retirada da mão
+
+Os executáveis Python e Rust aceitam as duas opções, que podem ser combinadas no PowerShell.
+
+```powershell
+.\CaixaVisaoComputacional.exe --zone --hand-block
+```
+
+- `--zone` pausa o YOLO até você arrastar um retângulo sobre o vídeo. Ao soltar, o contorno some e o YOLO passa a analisar somente aquele recorte. Use **Redefinir área de detecção** para selecionar outra região. Ao trocar de câmera ou reiniciar, selecione a área novamente.
+- `--hand-block` usa o MediaPipe no quadro inteiro da câmera. Enquanto houver uma mão detectada ou faltar uma leitura recente, o caixa pausa o lançamento, inclusive quando o OCR confirma o YOLO. Ao retirar a mão, a leitura do item recomeça. A opção funciona com o fechamento por gesto desativado.
 
 ## Como a leitura funciona
 

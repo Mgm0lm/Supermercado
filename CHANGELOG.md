@@ -1,5 +1,10 @@
 # Histórico de versões
 
+## rust-v0.2.2 e python-2026.11.11
+
+- `--zone` delimita a área de leitura do YOLO com um retângulo que some após a seleção.
+- `--hand-block` impede o lançamento de produtos enquanto o MediaPipe detectar uma mão, inclusive na confirmação imediata por OCR.
+
 ## rust-v0.2.1
 
 - Lança o item no carrinho assim que uma leitura atual do OCR confirma o produto reconhecido pelo YOLO.

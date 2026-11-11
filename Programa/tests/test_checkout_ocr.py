@@ -13,6 +13,9 @@ class CheckoutHarness:
     _invalidate_ocr = MainWindow._invalidate_ocr
     _reset_candidate = MainWindow._reset_candidate
     _confirm_product = MainWindow._confirm_product
+    _hand_block_status = MainWindow._hand_block_status
+    _pause_for_hand = MainWindow._pause_for_hand
+    _on_gesture_status = MainWindow._on_gesture_status
 
     def __init__(self):
         self.ocr_input = Mock()
@@ -28,6 +31,12 @@ class CheckoutHarness:
         self.cooldown_until = 0.0
         self.blocked = {}
         self.debug = False
+        self.zone_pending = False
+        self.hand_block = False
+        self.hand_ignore_before = 0.0
+        self.hand_sample = None
+        self.last_hand_landmarks = None
+        self.gesture_enabled = False
         self._reset_candidate()
         self._invalidate_ocr(0.0)
 
@@ -76,3 +85,34 @@ class CheckoutOcrTest(unittest.TestCase):
         scan.detect(10, "Café")
         scan.read(10.1, 10, "café 3 corações")
         scan._add_to_cart.assert_called_once_with("Café")
+
+    def test_hand_invalidates_pending_ocr_and_restarts_hold(self):
+        scan = CheckoutHarness()
+        scan.hand_block = True
+        with patch("main.time.monotonic", return_value=10.0):
+            scan.detect(10.0, "Milho")  # ainda sem leitura do MediaPipe
+            self.assertIsNone(scan.ocr_target)
+            scan._on_gesture_status(False, 0, None, 10.0)
+            scan.detect(10.0, "Milho")
+            with patch("main.time.time", return_value=10.1):
+                scan._on_gesture_status(False, 0, [object()], 10.0)
+            scan.read(10.2, 10.0, "milho")
+            scan.detect(12.0, "Milho")
+            scan._add_to_cart.assert_not_called()
+            scan._on_gesture_status(False, 0, None, 10.0)
+            scan.detect(12.1, "Milho")
+            scan.read(12.2, 10.0, "milho")
+            scan._add_to_cart.assert_not_called()
+            scan.read(12.3, 12.1, "milho")
+            scan._add_to_cart.assert_called_once_with("Milho")
+
+    def test_stale_clear_hand_result_cannot_confirm(self):
+        scan = CheckoutHarness()
+        scan.hand_block = True
+        scan.hand_sample = 10.0
+        with patch("main.time.monotonic", return_value=10.0):
+            scan.detect(10.0, "Milho")
+        with patch("main.time.monotonic", return_value=12.0):
+            scan.read(12.0, 10.0, "milho")
+            scan.detect(12.0, "Milho")
+        scan._add_to_cart.assert_not_called()

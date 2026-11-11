@@ -5,6 +5,7 @@ mesmo em maquina fraca (ver config.DESYNC_BBOXES).
 """
 
 import logging
+import math
 import time
 import traceback
 from threading import Lock
@@ -26,8 +27,8 @@ class Detection:
 
 
 class DetectionWorker(QThread):
-    # lista[Detection], frame usado (BGR np.ndarray), frame_id
-    detections_ready = Signal(list, object, int)
+    # lista[Detection], quadro original, frame_id, revisão da área
+    detections_ready = Signal(list, object, int, int)
     model_error = Signal(str)
     model_ready = Signal()
 
@@ -39,6 +40,9 @@ class DetectionWorker(QThread):
 
         self._conf_lock = Lock()
         self._conf_threshold = conf_threshold
+        self._zone = None
+        self._zone_revision = 0
+        self._zone_pending = False
         self._running = False
         self._model = None
 
@@ -46,9 +50,11 @@ class DetectionWorker(QThread):
         with self._conf_lock:
             self._conf_threshold = value
 
-    def _get_conf_threshold(self):
+    def set_zone(self, zone, revision, pending=False):
         with self._conf_lock:
-            return self._conf_threshold
+            self._zone = zone
+            self._zone_revision = revision
+            self._zone_pending = pending
 
     def run(self):
         logger.info("Thread de detecção iniciada. Carregando modelo: %s", self.model_path)
@@ -79,16 +85,28 @@ class DetectionWorker(QThread):
         consecutive_errors = 0
 
         while self._running:
+            with self._conf_lock:
+                conf, zone = self._conf_threshold, self._zone
+                revision, pending = self._zone_revision, self._zone_pending
+            if pending:
+                time.sleep(0.01)
+                continue
             frame, frame_id = self.shared_frame.get()
             if frame is None or frame_id == last_frame_id:
                 time.sleep(0.01)
                 continue
             last_frame_id = frame_id
 
-            conf = self._get_conf_threshold()
+            source = frame
+            left = top = 0
+            if zone is not None:
+                h, w = frame.shape[:2]
+                left, top = math.floor(zone[0] * w), math.floor(zone[1] * h)
+                right, bottom = math.ceil(zone[2] * w), math.ceil(zone[3] * h)
+                source = frame[top:bottom, left:right].copy()
             try:
                 results = self._model.predict(
-                    frame, conf=conf, imgsz=self.imgsz, verbose=False
+                    source, conf=conf, imgsz=self.imgsz, verbose=False
                 )
                 consecutive_errors = 0
             except Exception:
@@ -116,9 +134,11 @@ class DetectionWorker(QThread):
                     cls_name = names.get(cls_id, str(cls_id)) if isinstance(names, dict) else names[cls_id]
                     conf_val = float(b.conf[0])
                     x1, y1, x2, y2 = [int(v) for v in b.xyxy[0]]
-                    detections.append(Detection(cls_name, conf_val, (x1, y1, x2, y2)))
+                    detections.append(Detection(
+                        cls_name, conf_val, (x1 + left, y1 + top, x2 + left, y2 + top)
+                    ))
 
-            self.detections_ready.emit(detections, frame, frame_id)
+            self.detections_ready.emit(detections, frame, frame_id, revision)
 
     def stop(self):
         self._running = False

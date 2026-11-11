@@ -245,12 +245,7 @@ impl Checkout {
             return false;
         }
         let minimum = threshold * cfg.score_yolo_max_points;
-        self.blocked.retain(|name, seen| {
-            if scores.get(name).is_some_and(|s| s.total() >= minimum) {
-                *seen = now;
-            }
-            now - *seen < cfg.release_absence_seconds
-        });
+        self.observe_blocked(now, cfg, minimum, scores);
         let winner = scores
             .iter()
             .filter(|(name, s)| s.total() >= minimum && !self.blocked.contains_key(*name))
@@ -273,6 +268,21 @@ impl Checkout {
         }
         self.add_product(now, cfg, name);
         true
+    }
+
+    pub fn observe_blocked(
+        &mut self,
+        now: f64,
+        cfg: &Config,
+        minimum: f32,
+        scores: &BTreeMap<String, Score>,
+    ) {
+        self.blocked.retain(|name, seen| {
+            if scores.get(name).is_some_and(|s| s.total() >= minimum) {
+                *seen = now;
+            }
+            now - *seen < cfg.release_absence_seconds
+        });
     }
 
     fn add_product(&mut self, now: f64, cfg: &Config, name: &str) {

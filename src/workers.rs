@@ -4,7 +4,7 @@ use crate::{
     gesture::{self, Hand, HandTracker, Mlp},
     ocr::Reader,
 };
-use image::RgbImage;
+use image::{RgbImage, imageops};
 use nokhwa::{
     Camera,
     pixel_format::RgbFormat,
@@ -36,6 +36,22 @@ pub struct Gesture {
     pub frame: Arc<Frame>,
     pub hands: Vec<Hand>,
     pub confidence: f64,
+}
+
+#[derive(Clone, Copy)]
+pub enum Zone {
+    Disabled,
+    Selecting,
+    Selected([f32; 4]),
+}
+
+fn pixel_bounds(zone: [f32; 4], width: u32, height: u32) -> [u32; 4] {
+    let [left, top, right, bottom] = zone;
+    let x = (left * width as f32).floor() as u32;
+    let y = (top * height as f32).floor() as u32;
+    let right = ((right * width as f32).ceil() as u32).min(width);
+    let bottom = ((bottom * height as f32).ceil() as u32).min(height);
+    [x, y, right - x, bottom - y]
 }
 
 #[derive(Clone)]
@@ -70,12 +86,14 @@ pub struct Shared {
     pub ocr_request: Option<OcrRequest>,
     pub ocr: Option<Arc<OcrText>>,
     pub threshold: f32,
+    pub zone: Zone,
+    zone_revision: u64,
     pub gesture_enabled: bool,
     pub gesture_epoch: u64,
 }
 
 impl Shared {
-    fn new(cfg: &Config) -> Self {
+    fn new(cfg: &Config, zone: Zone) -> Self {
         Self {
             stop: false,
             camera_epoch: 0,
@@ -94,6 +112,8 @@ impl Shared {
             threshold: cfg
                 .conf_threshold_default
                 .clamp(cfg.conf_threshold_min, cfg.conf_threshold_max),
+            zone,
+            zone_revision: 0,
             gesture_enabled: cfg.enable_gesture_checkout_default,
             gesture_epoch: 0,
         }
@@ -108,6 +128,17 @@ impl Shared {
         self.ocr_request = None;
         self.ocr = None;
         self.camera_error.clear();
+        if !matches!(self.zone, Zone::Disabled) {
+            self.set_zone(Zone::Selecting);
+        }
+    }
+
+    pub fn set_zone(&mut self, zone: Zone) {
+        self.zone = zone;
+        self.zone_revision += 1;
+        self.found = None;
+        self.ocr_request = None;
+        self.ocr = None;
     }
 }
 
@@ -260,21 +291,44 @@ fn detect(shared: Workers, cfg: Config, base: PathBuf) {
     shared.lock().unwrap().detector_status.clear();
     let mut previous = 0;
     loop {
-        let (frame, threshold, epoch) = {
+        let (frame, threshold, epoch, zone, revision) = {
             let state = shared.lock().unwrap();
             if state.stop {
                 return;
             }
-            (state.frame.clone(), state.threshold, state.camera_epoch)
+            (
+                state.frame.clone(),
+                state.threshold,
+                state.camera_epoch,
+                state.zone,
+                state.zone_revision,
+            )
         };
         let Some(frame) = frame.filter(|f| f.id != previous) else {
             idle();
             continue;
         };
         previous = frame.id;
-        let result = detector.detect(&frame.pixels, threshold);
+        let result = match zone {
+            Zone::Selecting => continue,
+            Zone::Disabled => detector.detect(&frame.pixels, threshold),
+            Zone::Selected(zone) => {
+                let [x, y, w, h] = pixel_bounds(zone, frame.pixels.width(), frame.pixels.height());
+                let crop = imageops::crop_imm(&frame.pixels, x, y, w, h).to_image();
+                detector.detect(&crop, threshold).map(|mut detections| {
+                    for detection in &mut detections {
+                        let [x1, y1, x2, y2] = &mut detection.bounds;
+                        *x1 += x as f32;
+                        *x2 += x as f32;
+                        *y1 += y as f32;
+                        *y2 += y as f32;
+                    }
+                    detections
+                })
+            }
+        };
         let mut state = shared.lock().unwrap();
-        if state.camera_epoch != epoch || state.frame.is_none() {
+        if state.camera_epoch != epoch || state.zone_revision != revision || state.frame.is_none() {
             continue;
         }
         match result {
@@ -296,13 +350,14 @@ fn detect(shared: Workers, cfg: Config, base: PathBuf) {
     }
 }
 
-fn recognize_hands(shared: Workers, cfg: Config, base: PathBuf) {
+fn recognize_hands(shared: Workers, cfg: Config, base: PathBuf, hand_block: bool) {
     let mut models = None;
     let mut epoch = u64::MAX;
     let mut previous = 0;
     let mut failed = false;
     let started = Instant::now();
     let mut timestamp = 0;
+    let mut classifier_error = String::new();
     loop {
         let (frame, enabled, camera_epoch, next_epoch) = {
             let state = shared.lock().unwrap();
@@ -320,14 +375,24 @@ fn recognize_hands(shared: Workers, cfg: Config, base: PathBuf) {
             epoch = next_epoch;
             models = None;
             failed = false;
+            classifier_error.clear();
         }
-        if !enabled || failed {
+        if (!enabled && !hand_block) || failed {
             idle();
             continue;
         }
         if models.is_none() {
-            let load = HandTracker::new(&base, &cfg)
-                .and_then(|tracker| Ok((tracker, Mlp::load(&cfg.gesture_model_path)?)));
+            let load = HandTracker::new(&base, &cfg).and_then(|tracker| {
+                match Mlp::load(&cfg.gesture_model_path) {
+                    Ok(model) => Ok((tracker, Some(model))),
+                    Err(error) if hand_block => {
+                        classifier_error =
+                            format!("Erro ao carregar classificador de gesto: {error}");
+                        Ok((tracker, None))
+                    }
+                    Err(error) => Err(error),
+                }
+            });
             match load {
                 Ok(pair) => models = Some(pair),
                 Err(error) => {
@@ -357,8 +422,10 @@ fn recognize_hands(shared: Workers, cfg: Config, base: PathBuf) {
         }
         match result {
             Ok(hands) => {
-                let confidence = gesture::features(&hands).map_or(0.0, |x| model.predict(&x));
-                state.gesture_error.clear();
+                let confidence = model.as_ref().map_or(0.0, |model| {
+                    gesture::features(&hands).map_or(0.0, |x| model.predict(&x))
+                });
+                state.gesture_error.clone_from(&classifier_error);
                 state.gesture = Some(Arc::new(Gesture {
                     frame,
                     hands,
@@ -432,14 +499,14 @@ fn recognize_text(shared: Workers, cfg: Config, base: PathBuf) {
     }
 }
 
-pub fn start(cfg: &Config, base: &Path) -> Workers {
-    let shared = Arc::new(Mutex::new(Shared::new(cfg)));
+pub fn start(cfg: &Config, base: &Path, zone: Zone, hand_block: bool) -> Workers {
+    let shared = Arc::new(Mutex::new(Shared::new(cfg, zone)));
     let (state, config) = (shared.clone(), cfg.clone());
     thread::spawn(move || capture(state, config));
     let (state, config, assets) = (shared.clone(), cfg.clone(), base.to_path_buf());
     thread::spawn(move || detect(state, config, assets));
     let (state, config, assets) = (shared.clone(), cfg.clone(), base.to_path_buf());
-    thread::spawn(move || recognize_hands(state, config, assets));
+    thread::spawn(move || recognize_hands(state, config, assets, hand_block));
     if cfg.enable_ocr {
         let (state, config) = (shared.clone(), cfg.clone());
         let assets = base.to_path_buf();

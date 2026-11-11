@@ -31,6 +31,8 @@ fn run() -> Result<()> {
         .ok_or("Executável sem pasta")?
         .to_path_buf();
     let mut debug = false;
+    let mut zone = false;
+    let mut hand_block = false;
     let mut check_fullscreen = false;
     let mut operation = None;
     while let Some(arg) = args.next() {
@@ -41,6 +43,8 @@ fn run() -> Result<()> {
                 ))?
             }
             Some("--debug") => debug = true,
+            Some("--zone") => zone = true,
+            Some("--hand-block") => hand_block = true,
             Some("--check-fullscreen") => check_fullscreen = true,
             Some("--check-models") => operation = Some(Check::Models),
             Some("--check-camera") => operation = Some(Check::Camera),
@@ -82,8 +86,16 @@ fn run() -> Result<()> {
         options,
         Box::new(move |context| {
             Ok(Box::new(
-                ui::App::new(&context.egui_ctx, &base, cfg, debug, probe)
-                    .map_err(|err| err.to_string())?,
+                ui::App::new(
+                    &context.egui_ctx,
+                    &base,
+                    cfg,
+                    debug,
+                    zone,
+                    hand_block,
+                    probe,
+                )
+                .map_err(|err| err.to_string())?,
             ))
         }),
     )?;
