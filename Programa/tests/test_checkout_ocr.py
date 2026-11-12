@@ -4,6 +4,7 @@ from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
 from main import MainWindow
+from scoring import compute_scores, match_keywords
 
 
 class CheckoutHarness:
@@ -21,6 +22,8 @@ class CheckoutHarness:
         self.ocr_input = Mock()
         self.status_label = Mock()
         self.progress_bar = Mock()
+        self._set_detection_progress = Mock()
+        self._show_confirm_progress = Mock()
         self._update_debug_panel = Mock()
         self._update_message = Mock()
         self._add_to_cart = Mock()
@@ -53,6 +56,18 @@ class CheckoutHarness:
 
 
 class CheckoutOcrTest(unittest.TestCase):
+    def test_scores_use_keyword_fraction_and_reach_100(self):
+        detections = [
+            SimpleNamespace(cls_name="Café", conf=1, box=(40, 40, 60, 60)),
+            SimpleNamespace(cls_name="Milho", conf=.95, box=(0, 0, 10, 10)),
+        ]
+        keywords = {"Café": ["café", "moído", "cafe"]}
+        partial = match_keywords(["CAFÉ CAFÉ"], keywords)
+        self.assertEqual(partial["Café"].points, 17.5)
+        full = match_keywords(["CAFÉ moído"], keywords)
+        scores = compute_scores(detections, (100, 100), full, prediction=("3 Corações", 1))
+        self.assertEqual(scores["Café"].total, 100)
+
     def test_matching_read_launches_once_before_hold(self):
         scan = CheckoutHarness()
         scan.detect(10, "Milho")

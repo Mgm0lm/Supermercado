@@ -28,15 +28,18 @@ class Detection:
 
 class DetectionWorker(QThread):
     # lista[Detection], quadro original, frame_id, revisão da área
-    detections_ready = Signal(list, object, int, int)
+    detections_ready = Signal(list, object, int, int, object)
     model_error = Signal(str)
+    classifier_error = Signal(str)
     model_ready = Signal()
 
-    def __init__(self, model_path, shared_frame, conf_threshold, imgsz=640, parent=None):
+    def __init__(self, model_path, shared_frame, conf_threshold, imgsz=640, parent=None,
+                 classifier_path=None):
         super().__init__(parent)
         self.shared_frame = shared_frame
         self.model_path = model_path
         self.imgsz = imgsz
+        self.classifier_path = classifier_path
 
         self._conf_lock = Lock()
         self._conf_threshold = conf_threshold
@@ -80,6 +83,15 @@ class DetectionWorker(QThread):
 
         logger.info("Modelo carregado com sucesso. Classes: %s", getattr(self._model, "names", "?"))
         self.model_ready.emit()
+        classifier = None
+        if self.classifier_path is not None:
+            try:
+                import config
+                from classifier import ProductClassifier
+                classifier = ProductClassifier(self.classifier_path)
+            except Exception as error:
+                logger.exception("Falha ao iniciar o classificador")
+                self.classifier_error.emit(f"Classificador indisponível: {error}")
         self._running = True
         last_frame_id = -1
         consecutive_errors = 0
@@ -138,7 +150,21 @@ class DetectionWorker(QThread):
                         cls_name, conf_val, (x1 + left, y1 + top, x2 + left, y2 + top)
                     ))
 
-            self.detections_ready.emit(detections, frame, frame_id, revision)
+            prediction = None
+            if classifier is not None:
+                target = max(
+                    (d for d in detections if d.cls_name in config.PRODUCTS and d.conf >= conf),
+                    key=lambda d: d.conf, default=None,
+                )
+                if target is not None:
+                    try:
+                        prediction = classifier.predict(frame, target.box, conf, config.PRODUCTS)
+                    except Exception as error:
+                        logger.exception("Falha na inferência do classificador")
+                        self.classifier_error.emit(f"Classificador indisponível: {error}")
+                        classifier = None
+
+            self.detections_ready.emit(detections, frame, frame_id, revision, prediction)
 
     def stop(self):
         self._running = False

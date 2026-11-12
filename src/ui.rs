@@ -29,6 +29,8 @@ const RED: Color32 = Color32::from_rgb(239, 68, 68);
 const CONTROL_BORDER: Color32 = Color32::from_rgb(208, 213, 221);
 const GRID: Color32 = Color32::from_rgb(238, 241, 245);
 const HEADER_INK: Color32 = Color32::from_rgb(75, 85, 99);
+const CONFIRM_RAMP_SECONDS: f64 = 0.12;
+const CONFIRM_HOLD_SECONDS: f64 = 0.4;
 
 pub struct App {
     cfg: Config,
@@ -48,6 +50,7 @@ pub struct App {
     ocr_token: u64,
     ocr_target: Option<(String, u64)>,
     last_ocr_frame: u64,
+    confirm_progress: Option<(f64, f32)>,
     texture: Option<(u64, egui::TextureHandle)>,
     previous_frame: Option<(u64, Instant)>,
     previous_detection: Option<Instant>,
@@ -118,6 +121,7 @@ impl App {
             ocr_token: 1,
             ocr_target: None,
             last_ocr_frame: 0,
+            confirm_progress: None,
             texture: None,
             previous_frame: None,
             previous_detection: None,
@@ -242,6 +246,7 @@ impl App {
                 self.threshold,
                 "",
                 &self.keywords,
+                found.prediction.as_ref(),
             );
             if new_detection && now >= self.checkout.cooldown_until {
                 self.checkout.observe_blocked(
@@ -279,7 +284,9 @@ impl App {
             self.threshold,
             ocr.map_or("", |result| result.text.as_str()),
             &self.keywords,
+            found.prediction.as_ref(),
         );
+        let progress_before_confirmation = self.candidate_progress(now);
         let confirmed = ocr_target.is_some_and(|class| {
             self.checkout
                 .confirm_ocr(now, &self.cfg, self.threshold, &self.scores, class)
@@ -290,6 +297,7 @@ impl App {
                     .checkout
                     .product(now, &self.cfg, self.threshold, &self.scores))
         {
+            self.confirm_progress = Some((now, progress_before_confirmation));
             self.beep();
             self.reset_ocr();
         }
@@ -353,13 +361,14 @@ impl App {
     fn camera_card(&mut self, ui: &mut Ui, now: f64) {
         card(ui, |ui| {
             label_row(ui, "Câmera", 14.0, 19.0);
-            let (cameras, mut camera, mut gesture, gesture_error) = {
+            let (cameras, mut camera, mut gesture, gesture_error, classifier_error) = {
                 let state = self.workers.lock().unwrap();
                 (
                     state.cameras.clone(),
                     state.camera.clone(),
                     state.gesture_enabled,
                     state.gesture_error.clone(),
+                    state.classifier_error.clone(),
                 )
             };
             let initial = camera.clone();
@@ -432,6 +441,13 @@ impl App {
                 &mut self.desync,
                 "Vídeo fluido (caixas desincronizadas)",
             );
+            if !classifier_error.is_empty() {
+                ui.label(
+                    RichText::new(classifier_error.lines().next().unwrap())
+                        .size(11.0)
+                        .color(RED),
+                );
+            }
         });
     }
 
@@ -479,7 +495,7 @@ impl App {
             egui::Grid::new("scores")
                 .spacing(Vec2::new(9.0, 4.0))
                 .show(ui, |ui| {
-                    for label in ["Classe", "YOLO", "Centro", "OCR", "Total"] {
+                    for label in ["Classe", "YOLO", "Keras", "Centro", "OCR", "Total"] {
                         ui.label(RichText::new(label).monospace().strong().size(11.0));
                     }
                     ui.end_row();
@@ -496,7 +512,7 @@ impl App {
                                 .monospace()
                                 .size(11.0),
                         );
-                        for v in [s.yolo, s.center, s.ocr, s.total()] {
+                        for v in [s.yolo, s.classifier, s.center, s.ocr, s.total()] {
                             ui.label(RichText::new(format!("{v:.1}")).monospace().size(11.0));
                         }
                         ui.end_row();
@@ -836,13 +852,29 @@ impl App {
             font(14.0, "semibold"),
             BLUE,
         );
-        let bar = progress(
+        let bar = self
+            .confirm_progress
+            .and_then(|(start, from)| confirmation_progress(now - start, from))
+            .unwrap_or_else(|| self.candidate_progress(now));
+        progress_bar(ui, bar, 16.0, true);
+    }
+
+    fn candidate_progress(&self, now: f64) -> f32 {
+        progress(
             self.checkout.candidate.as_ref().map(|(_, start)| *start),
             now,
             self.cfg.min_detection_seconds,
-        );
-        progress_bar(ui, bar, 16.0, true);
+        )
+        .min(0.99)
     }
+}
+
+fn confirmation_progress(elapsed: f64, from: f32) -> Option<f32> {
+    if elapsed >= CONFIRM_RAMP_SECONDS + CONFIRM_HOLD_SECONDS {
+        return None;
+    }
+    let progress = (elapsed / CONFIRM_RAMP_SECONDS).clamp(0.0, 1.0) as f32;
+    Some(from + (1.0 - from) * progress)
 }
 
 impl eframe::App for App {
@@ -1051,6 +1083,14 @@ fn select_zone(ui: &mut Ui, image: Rect, start: &mut Option<egui::Pos2>) -> Opti
 mod tests {
     use super::*;
     use egui::{Event, Modifiers, PointerButton, RawInput};
+
+    #[test]
+    fn confirmation_ramps_then_holds_full_bar() {
+        assert_eq!(confirmation_progress(0.06, 0.2), Some(0.6));
+        assert_eq!(confirmation_progress(0.12, 0.2), Some(1.0));
+        assert_eq!(confirmation_progress(0.519, 0.2), Some(1.0));
+        assert_eq!(confirmation_progress(0.52, 0.2), None);
+    }
 
     #[test]
     fn zone_drag_clips_to_video_and_finishes_on_release() {

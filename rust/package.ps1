@@ -33,9 +33,10 @@ foreach ($file in $openvinoFiles) {
 foreach ($runtime in 'msvcp140.dll','msvcp140_1.dll','vcruntime140.dll','vcruntime140_1.dll') {
     Copy-Item -LiteralPath (Join-Path $VcRuntimeDir $runtime) -Destination $stage
 }
-foreach ($file in 'best.onnx','hand_landmarker.task') {
+foreach ($file in 'best.onnx','hand_landmarker.task','keras_model.onnx','labels.txt') {
     Copy-Item -LiteralPath (Join-Path $root "Programa/modelo/$file") -Destination $models
 }
+Copy-Item -LiteralPath (Join-Path $root 'Programa/export_classifier.py') -Destination $stage
 Copy-Item -LiteralPath (Join-Path $root 'rust/gesture_mlp.json') -Destination $models
 Copy-Item -LiteralPath (Join-Path $root 'Programa/ocr_keywords.json') -Destination $stage
 Copy-Item -LiteralPath (Join-Path $root 'rust/config_override.example.json') -Destination $stage
@@ -69,6 +70,7 @@ $files = @(
     'CaixaVisaoComputacional.exe', 'libmediapipe.dll', 'onnxruntime.dll',
     'msvcp140.dll', 'msvcp140_1.dll', 'vcruntime140.dll', 'vcruntime140_1.dll',
     'modelo/best.onnx', 'modelo/hand_landmarker.task', 'modelo/gesture_mlp.json',
+    'modelo/keras_model.onnx', 'modelo/labels.txt', 'export_classifier.py',
     'modelo/ocr/det.onnx', 'modelo/ocr/rec.onnx',
     'ocr_keywords.json', 'config_override.example.json',
     'avisos/MediaPipe-LICENSE.txt', 'avisos/MediaPipe-NOTICE.txt',

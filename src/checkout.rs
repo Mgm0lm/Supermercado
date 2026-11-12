@@ -1,17 +1,18 @@
-use crate::{config::Config, detector::Detection};
+use crate::{classifier::Prediction, config::Config, detector::Detection};
 use std::collections::{BTreeMap, BTreeSet};
 
 #[derive(Default)]
 pub struct Score {
     pub conf: f32,
     pub yolo: f32,
+    pub classifier: f32,
     pub center: f32,
     pub ocr: f32,
 }
 
 impl Score {
     pub fn total(&self) -> f32 {
-        self.yolo + self.center + self.ocr
+        self.yolo + self.classifier + self.center + self.ocr
     }
 }
 
@@ -100,6 +101,7 @@ pub fn scores(
     confidence: f32,
     text: &str,
     keywords: &Keywords,
+    prediction: Option<&Prediction>,
 ) -> BTreeMap<String, Score> {
     let mut best = BTreeMap::<&str, &Detection>::new();
     for detection in detections {
@@ -143,6 +145,18 @@ pub fn scores(
         scores.get_mut(class).unwrap().center =
             cfg.score_center_max_points * (1.0 - dist / diag).max(0.0);
     }
+    if let Some((name, probability)) = prediction
+        && (confidence..=1.0).contains(probability)
+        && cfg.products.contains_key(name)
+    {
+        let class = best
+            .values()
+            .filter(|d| same_product(cfg, &d.class, name))
+            .max_by(|a, b| a.confidence.total_cmp(&b.confidence))
+            .map_or(name, |d| &d.class);
+        scores.entry(class.clone()).or_default().classifier =
+            cfg.score_classifier_max_points * probability;
+    }
     let normalized = normalize(text);
     let tokens: Vec<_> = normalized.split_whitespace().collect();
     if !tokens.is_empty() {
@@ -155,10 +169,6 @@ pub fn scores(
                 .map(|key| normalize(key))
                 .filter(|k| !k.is_empty())
                 .collect();
-            let needed = cfg
-                .ocr_keywords_for_full_score
-                .min(unique.len() as f32)
-                .max(0.1);
             let matches: f32 = unique
                 .iter()
                 .map(|key| {
@@ -170,7 +180,7 @@ pub fn scores(
                 .sum();
             if matches > 0.0 {
                 scores.entry(class.clone()).or_default().ocr =
-                    cfg.score_ocr_max_points * (matches / needed).min(1.0);
+                    cfg.score_ocr_max_points * matches / unique.len() as f32;
             }
         }
     }
@@ -348,7 +358,7 @@ mod tests {
         let scores = BTreeMap::from([(
             "Café".into(),
             Score {
-                yolo: 32.0,
+                yolo: 27.0,
                 ..Score::default()
             },
         )]);
@@ -390,6 +400,7 @@ mod tests {
             0.6,
             "café 3 corações",
             &keywords,
+            None,
         );
         let mut checkout = Checkout::default();
         assert!(!checkout.product(0.0, &cfg, 0.6, &scores));
@@ -416,6 +427,7 @@ mod tests {
                 0.6,
                 text,
                 &keywords,
+                None,
             );
             let mut checkout = Checkout::default();
             assert!(!checkout.confirm_ocr(0.0, &cfg, 0.6, &scores, "Milho"));
@@ -429,8 +441,58 @@ mod tests {
     fn scores_accented_and_imperfect_ocr_words() {
         let cfg = Config::load(Path::new(".")).unwrap();
         let keywords = BTreeMap::from([("Café".into(), vec!["café".into(), "corações".into()])]);
-        let scores = scores(&cfg, &[], (100, 100), 0.6, "CAFÉ CORACOES500g", &keywords);
-        assert_eq!(scores["Café"].total(), 60.0);
+        let scores = scores(
+            &cfg,
+            &[],
+            (100, 100),
+            0.6,
+            "CAFÉ CORACOES500g",
+            &keywords,
+            None,
+        );
+        assert_eq!(scores["Café"].total(), 35.0);
         assert!(similarity("predilecta", "predilccta", 0.85) >= 0.85);
+    }
+
+    #[test]
+    fn classifier_and_proportional_ocr_add_to_yolo_and_center() {
+        let cfg = Config::load(Path::new(".")).unwrap();
+        let detections = [
+            Detection {
+                class: "Café".into(),
+                confidence: 1.0,
+                bounds: [40.0, 40.0, 60.0, 60.0],
+            },
+            Detection {
+                class: "Milho".into(),
+                confidence: 0.95,
+                bounds: [0.0, 0.0, 10.0, 10.0],
+            },
+        ];
+        let keys = BTreeMap::from([("Café".into(), vec!["café".into(), "moído".into()])]);
+        let prediction = ("3 Corações".into(), 1.0);
+        let partial = scores(
+            &cfg,
+            &detections,
+            (100, 100),
+            0.6,
+            "café café",
+            &keys,
+            Some(&prediction),
+        );
+        assert_eq!(partial["Café"].ocr, 17.5);
+        let full = scores(
+            &cfg,
+            &detections,
+            (100, 100),
+            0.6,
+            "café moído",
+            &keys,
+            Some(&prediction),
+        );
+        assert_eq!(full["Café"].total(), 100.0);
+        let weak = ("Café".into(), 0.59);
+        let filtered = scores(&cfg, &detections, (100, 100), 0.6, "", &keys, Some(&weak));
+        assert_eq!(filtered["Café"].classifier, 0.0);
     }
 }

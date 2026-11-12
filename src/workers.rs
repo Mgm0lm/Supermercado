@@ -1,4 +1,5 @@
 use crate::{
+    classifier::{Prediction, ProductClassifier},
     config::{Config, Result},
     detector::{Detection, Detector},
     gesture::{self, Hand, HandTracker, Mlp},
@@ -29,6 +30,7 @@ pub struct Frame {
 pub struct Found {
     pub frame: Arc<Frame>,
     pub detections: Vec<Detection>,
+    pub prediction: Option<Prediction>,
     pub finished: Instant,
 }
 
@@ -78,6 +80,7 @@ pub struct Shared {
     pub refresh: bool,
     pub camera_error: String,
     pub detector_status: String,
+    pub classifier_error: String,
     pub gesture_error: String,
     pub ocr_error: String,
     pub frame: Option<Arc<Frame>>,
@@ -102,6 +105,7 @@ impl Shared {
             refresh: true,
             camera_error: String::new(),
             detector_status: "Carregando modelo YOLO26...".into(),
+            classifier_error: String::new(),
             gesture_error: String::new(),
             ocr_error: String::new(),
             frame: None,
@@ -288,6 +292,17 @@ fn detect(shared: Workers, cfg: Config, base: PathBuf) {
             return;
         }
     };
+    let mut classifier = cfg.classifier_path.as_ref().and_then(|path| {
+        shared.lock().unwrap().detector_status = "Carregando classificador...".into();
+        match ProductClassifier::new(&base, path) {
+            Ok(classifier) => Some(classifier),
+            Err(error) => {
+                shared.lock().unwrap().classifier_error =
+                    format!("Classificador indisponível: {error}");
+                None
+            }
+        }
+    });
     shared.lock().unwrap().detector_status.clear();
     let mut previous = 0;
     loop {
@@ -327,6 +342,22 @@ fn detect(shared: Workers, cfg: Config, base: PathBuf) {
                 })
             }
         };
+        let mut prediction = None;
+        if let (Some(model), Ok(detections)) = (&mut classifier, &result)
+            && let Some(target) = detections
+                .iter()
+                .filter(|d| cfg.products.contains_key(&d.class))
+                .max_by(|a, b| a.confidence.total_cmp(&b.confidence))
+        {
+            match model.predict(&frame.pixels, target.bounds, threshold, &cfg) {
+                Ok(result) => prediction = result,
+                Err(error) => {
+                    shared.lock().unwrap().classifier_error =
+                        format!("Classificador indisponível: {error}");
+                    classifier = None;
+                }
+            }
+        }
         let mut state = shared.lock().unwrap();
         if state.camera_epoch != epoch || state.zone_revision != revision || state.frame.is_none() {
             continue;
@@ -337,6 +368,7 @@ fn detect(shared: Workers, cfg: Config, base: PathBuf) {
                 state.found = Some(Arc::new(Found {
                     frame,
                     detections,
+                    prediction,
                     finished: Instant::now(),
                 }));
             }

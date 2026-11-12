@@ -1,6 +1,7 @@
 #![windows_subsystem = "windows"]
 
 mod checkout;
+mod classifier;
 mod config;
 mod detector;
 mod gesture;
@@ -24,7 +25,7 @@ use windows::{
 };
 
 fn run() -> Result<()> {
-    let mut args = env::args_os().skip(1);
+    let mut args = env::args_os().skip(1).peekable();
     let executable = env::current_exe()?;
     let mut base = executable
         .parent()
@@ -33,6 +34,7 @@ fn run() -> Result<()> {
     let mut debug = false;
     let mut zone = false;
     let mut hand_block = false;
+    let mut classifier = None;
     let mut check_fullscreen = false;
     let mut operation = None;
     while let Some(arg) = args.next() {
@@ -45,6 +47,15 @@ fn run() -> Result<()> {
             Some("--debug") => debug = true,
             Some("--zone") => zone = true,
             Some("--hand-block") => hand_block = true,
+            Some("--classifier") => {
+                let model = args
+                    .next_if(|arg| !arg.to_string_lossy().starts_with('-'))
+                    .map(PathBuf::from);
+                classifier = Some(model);
+            }
+            Some(value) if value.starts_with("--classifier=") => {
+                classifier = Some(Some(PathBuf::from(&value["--classifier=".len()..])));
+            }
             Some("--check-fullscreen") => check_fullscreen = true,
             Some("--check-models") => operation = Some(Check::Models),
             Some("--check-camera") => operation = Some(Check::Camera),
@@ -63,6 +74,8 @@ fn run() -> Result<()> {
         }
     }
     let mut cfg = Config::load(&base)?;
+    cfg.classifier_path =
+        classifier.map(|path| path.unwrap_or_else(|| base.join("modelo/keras_model.onnx")));
     if let Some(check) = operation {
         return check.run(&base, &cfg);
     }
@@ -156,6 +169,19 @@ impl Check {
                 let hands = tracker.hands(&image, 0)?;
                 let mlp = Mlp::load(&cfg.gesture_model_path)?;
                 let probability = gesture::features(&hands).map(|f| mlp.predict(&f));
+                let classification = cfg
+                    .classifier_path
+                    .as_ref()
+                    .map(|path| {
+                        classifier::ProductClassifier::new(base, path)?.predict(
+                            &image,
+                            [0.0, 0.0, image.width() as f32, image.height() as f32],
+                            0.0,
+                            cfg,
+                        )
+                    })
+                    .transpose()?
+                    .flatten();
                 let output = serde_json::json!({
                     "backend": detector.backend_name(),
                     "detections": detections.iter().map(|d| serde_json::json!({
@@ -165,6 +191,7 @@ impl Check {
                         "side": if h.left { "Left" } else { "Right" }, "landmarks": h.points.len(),
                     })).collect::<Vec<_>>(),
                     "gesture_probability": probability,
+                    "classifier": classification,
                 });
                 println!("{output}");
             }
