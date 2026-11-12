@@ -12,7 +12,7 @@ def runtime_module(name):
     return not {"test", "tests", "benchmarks", "conftest"}.intersection(name.split("."))
 
 
-datas = []
+datas = [('export_classifier.py', '.')]
 binaries = []
 hiddenimports = ['scipy.stats._continuous_distns', 'scipy.stats._discrete_distns']
 for package in ('mediapipe', 'sklearn', 'scipy', 'joblib', 'rapidocr', 'rapidocr_onnxruntime'):

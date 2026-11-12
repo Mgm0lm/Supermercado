@@ -1,19 +1,4 @@
-"""
-Sistema de pontos que combina YOLO + OCR para decidir qual produto
-está na frente da câmera (sem depender de um único modelo).
-
-Pontuação por classe (valores em config.py):
-- YOLO: até 40 pts = 40 x confiança da melhor caixa daquela classe.
-- Desempate por posição: se duas ou mais classes estão acima da
-  confiança mínima e com até 8% de diferença entre si (em relação à
-  melhor), a que estiver mais perto do centro da imagem ganha até 5 pts.
-- OCR: até 60 pts se o texto lido no rótulo contiver palavras
-  específicas da classe (OCR_KEYWORDS).
-
-Uma classe é aceita se o total >= 40 x precisão mínima (os botões +/-
-da interface continuam valendo: sem OCR, o comportamento é idêntico ao
-de antes). Este módulo é puro (sem Qt/YOLO/OCR), fácil de testar.
-"""
+"""Pontuação por classe: YOLO (30), classificador (30), OCR (35) e centro (5)."""
 
 import math
 import re
@@ -70,11 +55,10 @@ class OcrMatch:
 def match_keywords(texts, keywords_by_class=None):
     """Retorna {classe: OcrMatch} para as classes com palavras achadas.
     Cada palavra-chave achada vale 1 (ou a semelhança, se for aproximada);
-    pontos = máx x min(1, soma / OCR_KEYWORDS_FOR_FULL_SCORE)."""
+    pontos = máx x soma / total de palavras-chave únicas da classe."""
     if keywords_by_class is None:
         keywords_by_class = _cfg("OCR_KEYWORDS", {})
-    max_points = float(_cfg("SCORE_OCR_MAX_POINTS", 60))
-    full_matches = max(0.1, float(_cfg("OCR_KEYWORDS_FOR_FULL_SCORE", 2)))
+    max_points = float(_cfg("SCORE_OCR_MAX_POINTS", 35))
     threshold = float(_cfg("OCR_FUZZY_THRESHOLD", 0.85))
 
     tokens = tokenize(texts)
@@ -85,16 +69,13 @@ def match_keywords(texts, keywords_by_class=None):
     for cls_name, keywords in keywords_by_class.items():
         total, words = 0.0, []
         unique = [k for k in dict.fromkeys(normalize_text(k) for k in keywords) if k]
-        needed = max(0.1, min(full_matches, len(unique)))  # 1 palavra so: 1 acerto basta
         for kw in unique:
-            if not kw:
-                continue
             sim = _similarity(kw, tokens, threshold)
             if sim > 0:
                 total += sim
                 words.append(kw)
         if total > 0:
-            result[cls_name] = OcrMatch(max_points * min(1.0, total / needed), words)
+            result[cls_name] = OcrMatch(max_points * total / len(unique), words)
     return result
 
 
@@ -125,26 +106,27 @@ class ClassScore:
     cls_name: str
     conf: float = None          # None = nenhuma caixa do YOLO pra essa classe
     yolo: float = 0.0
+    classifier: float = 0.0
     center: float = 0.0
     ocr: float = 0.0
     ocr_words: list = field(default_factory=list)
 
     @property
     def total(self):
-        return self.yolo + self.center + self.ocr
+        return self.yolo + self.classifier + self.center + self.ocr
 
 
 def min_total_for_conf(min_conf):
     """Pontuação mínima pra aceitar = pontos de YOLO de uma detecção
     exatamente na confiança mínima (mantém o sentido dos botões +/-)."""
-    return float(_cfg("SCORE_YOLO_MAX_POINTS", 40)) * min_conf
+    return float(_cfg("SCORE_YOLO_MAX_POINTS", 30)) * min_conf
 
 
-def compute_scores(detections, image_size, ocr_matches=None, products=None):
+def compute_scores(detections, image_size, ocr_matches=None, products=None, prediction=None):
     """detections: objetos com .cls_name, .conf, .box (x1,y1,x2,y2), já
     acima da confiança mínima. image_size: (largura, altura)."""
     products = _cfg("PRODUCTS", {}) if products is None else products
-    yolo_max = float(_cfg("SCORE_YOLO_MAX_POINTS", 40))
+    yolo_max = float(_cfg("SCORE_YOLO_MAX_POINTS", 30))
     center_max = float(_cfg("SCORE_CENTER_MAX_POINTS", 5))
     margin = float(_cfg("SCORE_CENTER_TIE_MARGIN", 0.08))
     w, h = image_size
@@ -173,6 +155,15 @@ def compute_scores(detections, image_size, ocr_matches=None, products=None):
             nearest = min(dists, key=dists.get)
             scores[nearest].center = center_max * max(0.0, 1.0 - dists[nearest] / half_diag)
 
+    if prediction is not None:
+        name, confidence = prediction
+        if name in products:
+            aliases = [score for score in scores.values() if same_product(score.cls_name, name)]
+            score = max(aliases, key=lambda score: score.conf, default=None)
+            if score is None:
+                score = scores.setdefault(name, ClassScore(name))
+            score.classifier = float(_cfg("SCORE_CLASSIFIER_MAX_POINTS", 30)) * confidence
+
     for cls_name, match in (ocr_matches or {}).items():
         if cls_name not in products:
             continue
@@ -193,13 +184,16 @@ def pick_winner(scores, min_total):
 def format_debug_text(scores, winner, min_total, ocr_enabled, ocr_texts, ocr_age, ocr_elapsed, blocked=()):
     """Texto do painel --debug."""
     lines = [f"DEBUG: mínimo p/ aceitar {min_total:.1f} pts (x = bloqueada)",
-             f"{'classe':<17}{'yolo':>6}{'cent':>6}{'ocr':>6}{'total':>7}"]
+             f"{'classe':<17}{'yolo':>6}{'class':>6}{'cent':>6}{'ocr':>6}{'total':>7}"]
     ordered = sorted(scores.values(), key=lambda s: s.total, reverse=True)[:5]
     if not ordered:
         lines.append("(nenhuma classe pontuando)")
     for s in ordered:
         mark = ">" if winner is not None and s.cls_name == winner.cls_name else ("x" if s.cls_name in blocked else " ")
-        lines.append(f"{mark}{s.cls_name[:16]:<16}{s.yolo:6.1f}{s.center:6.1f}{s.ocr:6.1f}{s.total:7.1f}")
+        lines.append(
+            f"{mark}{s.cls_name[:16]:<16}{s.yolo:6.1f}{s.classifier:6.1f}"
+            f"{s.center:6.1f}{s.ocr:6.1f}{s.total:7.1f}"
+        )
     if not ocr_enabled:
         lines.append("OCR: desativado ou indisponível")
     elif ocr_age is None:

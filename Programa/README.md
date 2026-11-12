@@ -157,28 +157,28 @@ gerado o `.exe`**, sem precisar rodar o PyInstaller de novo:
 3. Abra o programa de novo — o `app.log` mostra quais overrides foram
    aplicados.
 
-## 3.3 Sistema de pontos (YOLO + OCR) e modo `--debug`
+## 3.3 Sistema de pontos e modo `--debug`
 
-Pra não depender só do YOLO, cada classe recebe pontos de duas fontes:
+Cada classe pode somar até 100 pontos.
 
 | Fonte | Pontos | Regra |
 |---|---|---|
-| YOLO | até 40 | `40 x confiança` da melhor caixa da classe |
+| YOLO | até 30 | `30 x confiança` da melhor caixa da classe |
+| Classificador | até 30 | `30 x confiança` da classe prevista no recorte do YOLO, se `--classifier` estiver ativo e a previsão passar pelo limiar |
 | Desempate | até 5 | se classes acima da confiança mínima estão a até 8 pontos percentuais da melhor, a mais perto do centro da imagem ganha `5 x (1 - distância/distância_máxima)` |
-| OCR | até 60 | lê o rótulo e procura palavras de `OCR_KEYWORDS` (2 palavras = 60, 1 = 30; tolera erros de leitura e acentos) |
+| OCR | até 35 | soma os acertos em palavras-chave únicas e divide pelo número de palavras esperadas para a classe. Um acerto exato vale 1, e os aproximados valem a semelhança acima do limiar |
 
 A classe com maior total é a candidata, desde que
-`total >= 40 x precisão mínima`. Quando uma leitura atual do OCR
+`total >= 30 x confiança mínima`. Quando uma leitura atual do OCR
 confirma o produto detectado pelo YOLO, ele entra no carrinho assim que
-o OCR responde. Nos demais casos, a candidata precisa ficar 1.5s. Os botões `+`/`-`
-continuam valendo e, com o OCR desligado, o comportamento é idêntico
-ao de antes. O OCR pode arbitrar entre classes parecidas (ex: o YOLO
+o OCR responde. Nos demais casos, a candidata precisa ficar 1,5 s. Os botões `+`/`-`
+ajustam o limiar de confiança. O OCR pode arbitrar entre classes parecidas (ex: o YOLO
 oscila entre milho e molho de tomate, mas o rótulo diz "predilecta").
 Se só o OCR reconhecer uma classe (sem caixa do YOLO pra ela), ela
 também pode ser aceita.
 
 - **Oculto por padrão.** `python main.py --debug` (ou o `.exe` com
-  `--debug`) mostra um painel com YOLO / centro / OCR / total de cada
+  `--debug`) mostra um painel com YOLO / classificador / centro / OCR / total de cada
   classe, o texto lido e o tempo do OCR - útil pra ajustar
   `OCR_KEYWORDS` (palavras específicas de cada produto, sem repetir
   palavras que apareçam em outros rótulos; "Milho" só tem uma palavra,
@@ -199,6 +199,9 @@ python main.py
 
 - `ESC` fecha o programa.
 - `python main.py --debug` mostra o painel com a pontuação de cada classe (seção 3.3).
+- `python main.py --classifier` ativa o modelo do projeto. Com
+  `--classifier caminho.h5`, use `labels.txt` na pasta do modelo e
+  instale `keras`, `h5py`, `torch` e `onnx` no ambiente que fará a conversão.
 - `python main.py --zone` permite arrastar um retângulo sobre o vídeo para
   delimitar a área que o YOLO analisa. O contorno some ao soltar o mouse.
   Use **Redefinir área de detecção** para desenhar outra área.

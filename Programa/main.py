@@ -18,7 +18,7 @@ from collections import deque
 
 import cv2
 import numpy as np
-from PySide6.QtCore import QEvent, QPoint, QRect, QRectF, Qt, QUrl, QTimer, QThread
+from PySide6.QtCore import QEvent, QPoint, QPropertyAnimation, QRect, QRectF, Qt, QUrl, QTimer, QThread
 from PySide6.QtGui import QImage, QPixmap, QPainterPath, QRegion, QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QLabel, QPushButton, QHBoxLayout,
@@ -150,7 +150,7 @@ def draw_fps_overlay(frame, cam_fps, det_fps):
 
 
 class MainWindow(QMainWindow):
-    def __init__(self, debug=False, zone=False, hand_block=False):
+    def __init__(self, debug=False, zone=False, hand_block=False, classifier=None):
         super().__init__()
         self.debug = debug  # --debug: mostra o painel de pontuacao
         self.setWindowTitle(config.APP_TITLE)
@@ -166,6 +166,7 @@ class MainWindow(QMainWindow):
         self.zone_revision = 0
         self.zone_start = None
         self.hand_block = hand_block
+        self.classifier_path = classifier
         self.hand_sample = None
         self.hand_ignore_before = 0.0
 
@@ -281,6 +282,15 @@ class MainWindow(QMainWindow):
         self.progress_bar = QProgressBar()
         self.progress_bar.setRange(0, 100)
         self.progress_bar.setValue(0)
+        self.confirm_animation = QPropertyAnimation(self.progress_bar, b"value", self)
+        self.confirm_animation.setDuration(120)
+        self.confirm_animation.setEndValue(100)
+        self.confirm_hold = QTimer(self)
+        self.confirm_hold.setSingleShot(True)
+        self.confirm_hold.setInterval(400)
+        self.confirm_hold.setTimerType(Qt.PreciseTimer)
+        self.confirm_animation.finished.connect(self.confirm_hold.start)
+        self.confirm_hold.timeout.connect(self._clear_confirm_progress)
         status_row.addWidget(self.status_label, stretch=1)
         left_col.addLayout(status_row)
         left_col.addWidget(self.progress_bar)
@@ -556,11 +566,12 @@ class MainWindow(QMainWindow):
 
         self.detection_worker = DetectionWorker(
             config.MODEL_PATH, self.shared_frame, self.conf_threshold,
-            imgsz=config.INFERENCE_IMGSZ
+            imgsz=config.INFERENCE_IMGSZ, classifier_path=self.classifier_path,
         )
         self.detection_worker.set_zone(None, self.zone_revision, self.zone_pending)
         self.detection_worker.detections_ready.connect(self._on_detections_ready)
         self.detection_worker.model_error.connect(self._on_model_error)
+        self.detection_worker.classifier_error.connect(self._on_classifier_error)
         self.detection_worker.start()
 
         self._start_ocr_worker()
@@ -595,7 +606,6 @@ class MainWindow(QMainWindow):
         ):
             self._confirm_product(target, now)
             self.status_label.setText("Aguardando... (evitando leitura duplicada)")
-            self.progress_bar.setValue(100)
             self._update_message()
             return
         self.ocr_history.append((now, texts))
@@ -716,6 +726,9 @@ class MainWindow(QMainWindow):
         self.status_label.setText("Erro no modelo. Veja os detalhes")
         QMessageBox.critical(self, "Erro no modelo", msg)
 
+    def _on_classifier_error(self, msg):
+        self._show_toast(msg.splitlines()[0], seconds=6)
+
     # ------------------------------------------------------------------
     # LOOP DE VIDEO
     # ------------------------------------------------------------------
@@ -726,7 +739,7 @@ class MainWindow(QMainWindow):
         if self.desync_enabled or self.zone_pending:
             self._render_frame(frame, self.last_detections)
 
-    def _on_detections_ready(self, detections, frame, frame_id, revision):
+    def _on_detections_ready(self, detections, frame, frame_id, revision, prediction):
         if self.zone_pending or revision != self.zone_revision:
             return
         self.det_fps_counter.tick()
@@ -735,7 +748,7 @@ class MainWindow(QMainWindow):
         else:
             self.last_detections = detections
 
-        self._update_cart_logic(detections, frame)
+        self._update_cart_logic(detections, frame, prediction)
         self._update_message()
 
     def _begin_zone_selection(self):
@@ -750,7 +763,7 @@ class MainWindow(QMainWindow):
         self.blocked.clear()
         self._reset_candidate()
         self._invalidate_ocr(time.time())
-        self.progress_bar.setValue(0)
+        self._set_detection_progress(0)
         self.status_label.setText("Arraste sobre o vídeo para delimitar a área do YOLO.")
 
     def eventFilter(self, obj, event):
@@ -829,14 +842,14 @@ class MainWindow(QMainWindow):
             elif now - self.blocked[cls_name] >= release:
                 del self.blocked[cls_name]
 
-    def _update_cart_logic(self, detections, frame):
+    def _update_cart_logic(self, detections, frame, prediction=None):
         now = time.time()
 
         if now < self.cooldown_until:
             self._reset_candidate()
             self.ocr_input.clear()
             self.status_label.setText("Aguardando... (evitando leitura duplicada)")
-            self.progress_bar.setValue(0)
+            self._set_detection_progress(0)
             return
 
         valid = [d for d in detections if d.cls_name in config.PRODUCTS]
@@ -861,12 +874,17 @@ class MainWindow(QMainWindow):
                 else:
                     self.ocr_input.set(frame, None)
 
-        # pontuação: YOLO + desempate pelo centro + OCR
+        # Desconsidera resultados obtidos antes de um aumento da confiança mínima.
+        if prediction is not None and prediction[1] < self.conf_threshold:
+            prediction = None
         ocr_matches = {}
         if self.ocr_updated_at is not None and now - self.ocr_updated_at <= cfg("OCR_RESULT_TTL_SECONDS", 3.0):
             ocr_matches = self.ocr_matches
         h, w = frame.shape[:2]
-        scores = scoring.compute_scores(valid, (w, h), ocr_matches)
+        scores = scoring.compute_scores(
+            [d for d in valid if d.conf >= self.conf_threshold], (w, h), ocr_matches,
+            prediction=prediction,
+        )
         min_total = scoring.min_total_for_conf(self.conf_threshold)
         self._update_blocked(scores, min_total, now)
         if hand_status:
@@ -879,7 +897,7 @@ class MainWindow(QMainWindow):
         if winner is None:
             self._reset_candidate()
             self.status_label.setText("Aguardando produto...")
-            self.progress_bar.setValue(0)
+            self._set_detection_progress(0)
             return
 
         best_name = winner.cls_name
@@ -892,7 +910,7 @@ class MainWindow(QMainWindow):
         display_name = config.PRODUCTS.get(best_name, {}).get("display_name", best_name)
         suffix = f"  [{winner.total:.0f} pts]" if self.debug else ""
         self.status_label.setText(f"Lendo: {display_name}{suffix}")
-        self.progress_bar.setValue(int(progress * 100))
+        self._set_detection_progress(min(99, int(progress * 100)))
 
         if elapsed >= config.MIN_DETECTION_SECONDS:
             self._confirm_product(best_name, now)
@@ -903,6 +921,23 @@ class MainWindow(QMainWindow):
         self.cooldown_until = now + config.COOLDOWN_SECONDS
         self._reset_candidate()
         self._invalidate_ocr(now)
+        self._show_confirm_progress()
+
+    def _show_confirm_progress(self):
+        self.confirm_hold.stop()
+        self.confirm_animation.stop()
+        self.confirm_animation.setStartValue(self.progress_bar.value())
+        self.confirm_animation.start()
+
+    def _clear_confirm_progress(self):
+        self.progress_bar.setValue(0)
+
+    def _set_detection_progress(self, value):
+        if (
+            not self.confirm_hold.isActive()
+            and self.confirm_animation.state() != self.confirm_animation.State.Running
+        ):
+            self.progress_bar.setValue(value)
 
     def _reset_candidate(self):
         self.candidate_class = None
@@ -923,7 +958,7 @@ class MainWindow(QMainWindow):
             self._invalidate_ocr(now)
         if not self.zone_pending:
             self.status_label.setText(status)
-            self.progress_bar.setValue(0)
+            self._set_detection_progress(0)
 
     def _add_to_cart(self, class_name):
         self.cart.add(class_name)
@@ -1042,11 +1077,13 @@ class MainWindow(QMainWindow):
 def parse_args():
     parser = argparse.ArgumentParser(description=config.APP_TITLE)
     parser.add_argument("--debug", action="store_true",
-                        help="mostra o painel com a pontuação (YOLO + OCR) de cada classe")
+                        help="mostra o painel com a pontuação de cada classe")
     parser.add_argument("--zone", action="store_true",
                         help="permite delimitar a área do YOLO no vídeo")
     parser.add_argument("--hand-block", action="store_true",
                         help="bloqueia a confirmação de itens enquanto o MediaPipe detectar mãos")
+    parser.add_argument("--classifier", nargs="?", const="", metavar="MODELO",
+                        help="ativa o classificador de produtos padrão ou indica um .h5")
     return parser.parse_known_args()  # o resto vai pro Qt
 
 
@@ -1063,7 +1100,11 @@ def main():
     logging.info("MODEL_PATH resolvido para: %s (existe: %s) | debug=%s",
                  config.MODEL_PATH, os.path.exists(config.MODEL_PATH), args.debug)
     app = QApplication([sys.argv[0]] + qt_args)
-    window = MainWindow(debug=args.debug, zone=args.zone, hand_block=args.hand_block)
+    classifier = args.classifier
+    if classifier == "":
+        classifier = os.path.join(config.BASE_DIR, "modelo", "keras_model.onnx")
+    window = MainWindow(debug=args.debug, zone=args.zone, hand_block=args.hand_block,
+                        classifier=classifier)
     window.showFullScreen()
     sys.exit(app.exec())
 

@@ -102,24 +102,24 @@ BLINK_EAR_THRESHOLD = 0.21      # abaixo disso, considera olho fechado
 BLINK_COOLDOWN_SECONDS = 0.6    # evita capturar 2x no mesmo piscar
 
 # ------------------------------------------------------------------
-# SISTEMA DE PONTOS (YOLO + OCR)
+# SISTEMA DE PONTOS (YOLO, CLASSIFICADOR E OCR)
 # ------------------------------------------------------------------
 # Oculto na interface; use  python main.py --debug  (ou o .exe com
 # --debug) para ver a pontuação de cada classe e o texto lido pelo OCR.
 #
 # - YOLO: a melhor caixa de cada classe vale até SCORE_YOLO_MAX_POINTS
-#   (= 40 x confiança).
+#   (= 30 x confiança).
 # - Desempate: se classes acima da confiança mínima estão a até
 #   SCORE_CENTER_TIE_MARGIN (0.08 = 8 pontos percentuais) da melhor, a
 #   mais perto do centro da imagem ganha até SCORE_CENTER_MAX_POINTS.
-# - OCR: até SCORE_OCR_MAX_POINTS se o rótulo contiver palavras de
-#   OCR_KEYWORDS.
-# - Aceita a classe com maior total, desde que total >= 40 x precisão
-#   mínima (botões +/-). Sem OCR, funciona igual a antes.
-SCORE_YOLO_MAX_POINTS = 40
+# - Classificador: 30 x confiança para a classe acima do limiar.
+# - OCR: até 35 pontos pela fração de palavras esperadas reconhecidas.
+# - Aceita a classe com maior total, desde que total >= 30 x confiança mínima.
+SCORE_YOLO_MAX_POINTS = 30
+SCORE_CLASSIFIER_MAX_POINTS = 30
 SCORE_CENTER_MAX_POINTS = 5
 SCORE_CENTER_TIE_MARGIN = 0.08
-SCORE_OCR_MAX_POINTS = 60
+SCORE_OCR_MAX_POINTS = 35
 
 ENABLE_OCR = True                # False = só YOLO (nem carrega o OCR)
 OCR_INTERVAL_SECONDS = 0.5       # pausa mínima entre leituras (poupa CPU)
@@ -130,7 +130,6 @@ OCR_MIN_TEXT_SCORE = 0.5         # descarta trechos com confiança menor
 OCR_MAX_SIDE = 800               # só reduz recortes maiores que isso
 OCR_DET_SIDE_LEN = 448           # menor = mais rápido (mas lê texto menor pior); padrão do RapidOCR: 736
 OCR_THREADS = 2                  # núcleos do OCR (0 = todos); menos = o YOLO sofre menos
-OCR_KEYWORDS_FOR_FULL_SCORE = 2  # palavras achadas p/ ganhar os 60 pts (classe com 1 palavra só: 1)
 OCR_FUZZY_THRESHOLD = 0.85       # tolerância a erro de leitura (palavras 5+ letras)
 
 # Palavras (uma só por item, sem acento/maiúscula) que aparecem no rótulo

@@ -1,5 +1,11 @@
 # Histórico de versões
 
+## python-2026.11.12
+
+- `--classifier` ativa o classificador Keras do projeto ou carrega um modelo H5 indicado pelo usuário.
+- Pontuação de até 30 pelo YOLO, 30 pelo classificador, 35 pelo OCR proporcional às palavras-chave e 5 pela posição.
+- A barra sobe rapidamente a 100% depois do lançamento e permanece cheia por 0,4 s.
+
 ## python-2026.11.11
 
 - `--zone` delimita a área de leitura do YOLO com um retângulo que some após a seleção.
