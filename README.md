@@ -1,6 +1,6 @@
 # Supermercado
 
-O Supermercado é um caixa autônomo para Windows que usa a câmera para reconhecer embalagens e lançar produtos no carrinho. O **YOLO26** localiza o produto e sugere uma classe. O **OCR** lê o rótulo, normalmente dentro da caixa detectada, e compara o texto com as palavras-chave do catálogo. O **classificador Keras**, ativado com `--classifier`, analisa o recorte da caixa válida de maior confiança do YOLO e dá um segundo palpite sobre o produto.
+Caixa semiautônomo para Windows que usa a câmera para reconhecer embalagens e lançar produtos no carrinho. O **YOLO26** localiza o produto e sugere uma classe. O **OCR** lê o rótulo, normalmente dentro da caixa detectada, e compara o texto com as palavras-chave do catálogo. O **classificador Keras**, ativado com `--classifier`, analisa o recorte da caixa válida de maior confiança do YOLO e dá um segundo palpite sobre o produto.
 
 Selecione a câmera e apresente um produto de cada vez. Os botões **−** e **+** ajustam a confiança mínima. Use **Remover** para excluir uma linha do carrinho e **Nova compra** para mostrar o total e iniciar outro atendimento. Com **Finalizar compra com gesto (2 mãos)** ativado, o MediaPipe extrai 21 pontos de cada mão e um classificador de gestos aciona o fechamento. Pressione **Esc** para sair.
 
@@ -13,6 +13,8 @@ Selecione a câmera e apresente um produto de cada vez. Os botões **−** e **+
 | OCR | RapidOCR | Modelos PP-OCRv4 executados via ONNX Runtime, com processamento em Rust |
 | Gesto | MediaPipe e classificador scikit-learn | MediaPipe pela interface C e pesos exportados para JSON |
 | Distribuição | PyInstaller com o ambiente Python incluído | Executável nativo com modelos e DLLs |
+
+A versão Python é mais versátil, enquanto a versão Rust é mais otimizada.
 
 As duas versões abrem em tela cheia e usam o mesmo fluxo de caixa. O pacote Rust roda sem instalar Python para o uso normal. Em ambos os pacotes, abrir um classificador `.h5` externo exige um ambiente Python para a conversão. O modelo padrão já vem convertido.
 
@@ -52,7 +54,7 @@ Para ajustar preços, palavras-chave ou tempos, copie `config_override.example.j
 
 ## Python — preparar, testar e empacotar
 
-Use o **Python 3.12 x64 a partir da versão 3.12.1** e o PowerShell. Os comandos usam diretamente o Python do ambiente virtual, dispensando ativação. [Ambientes virtuais no Python](https://docs.python.org/3.12/library/venv.html)
+Use o **Python 3.12 x64** e o PowerShell. Os comandos usam diretamente o Python do ambiente virtual, dispensando ativação. [Ambientes virtuais no Python](https://docs.python.org/3.12/library/venv.html)
 
 ```powershell
 git clone --branch main https://github.com/Mgm0lm/Supermercado.git Supermercado-Python
